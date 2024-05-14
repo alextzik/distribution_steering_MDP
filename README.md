@@ -1,1 +1,1 @@
-# distribution_steering_MDP
+# Discrete-Time Distribution Steering using MDPs

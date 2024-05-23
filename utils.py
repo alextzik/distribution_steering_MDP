@@ -10,6 +10,8 @@ import numpy as np
     args:
         - state_1 (instance of State)
         - state_2 (instance of State)
+
+    Adapted from https://github.com/sisl/DeepNFStateEstimation/blob/main/kl_estimator.py
 """
 def two_sample_kl_estimator(state1, state2):
     x1 = state1.samples

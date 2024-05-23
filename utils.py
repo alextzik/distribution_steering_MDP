@@ -4,6 +4,7 @@
 ##########################################################################################
 
 import numpy as np
+import scipy as sp
 
 """
     Computes the KL divergence between two sample sets
@@ -35,3 +36,22 @@ def two_sample_kl_estimator(state1, state2):
     dkl += np.log(m / (n - 1.0))
 
     return dkl
+
+"""
+    Computes the Wasserstein distance between a set of samples and N(mu, Sigma), assuming the samples 
+    follow a Gaussian distribution.
+    args:
+        - samples: np.array [dim, num_samples]
+        - target mean: np.array
+        - target covariance: np.array
+"""
+def wasserstein_dist(samples, mean, covariance):
+    empirical_mean = np.mean(samples, axis=1)
+    empirical_cov = np.cov(samples)
+    
+    dist = np.linalg.norm(empirical_mean - mean)**2 + \
+                        np.trace(empirical_cov + covariance - 2*sp.linalg.sqrtm( sp.linalg.sqrtm(covariance)@empirical_cov@sp.linalg.sqrtm(covariance)  ) )
+                
+    dist = np.sqrt(dist)
+
+    return dist

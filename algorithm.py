@@ -6,9 +6,11 @@
 import math
 import numpy as np
 from tqdm import tqdm
-from utils import two_sample_kl_estimator
 import matplotlib.pyplot as plt
+import os
+
 import parameters as pars
+from utils import two_sample_kl_estimator, wasserstein_dist
 
 # The class used to model the nodes in MCTS
 class Node:
@@ -87,8 +89,8 @@ class MCTS:
         self.ao = pars.APW_A0
 
         # constants for normalizing cost between 0 and 1
-        self.min_reward = pars.MIN_REWARD
-        self.max_reward = pars.MAX_REWARD
+        self.min_cost = pars.MIN_COST
+        self.max_cost = pars.MAX_COST
 
     """
         Deploys MCTS starting from an initial state at the root
@@ -122,6 +124,7 @@ class MCTS:
         
     """
     def _simulate(self, node, depth):
+        # print(len(node.children))
         if depth == 0:
             return 0
 
@@ -140,7 +143,7 @@ class MCTS:
          node (instance of Node).
     """
     def _action_prog_widen(self, node):
-        print(len(node.children), self.ka*node.visits**(self.ao))
+        # print(len(node.children), self.ka*node.visits**(self.ao))
         if len(node.children) <= self.ka*node.visits**(self.ao):
         # if len(node.children) <= 10:
             new_action = node.sample_action()
@@ -182,12 +185,17 @@ class MCTS:
         state_prev = node.state
         state_next = next_node.state
 
-        KL_div = two_sample_kl_estimator(self.target_state, state_next)
+        # KL_div = two_sample_kl_estimator(self.target_state, state_next)
         
-        res = np.mean(np.linalg.norm(next_node.state.samples, axis=0))
+        # res = np.mean(np.linalg.norm(next_node.state.samples, axis=0))
+        # res = wasserstein_dist(state_next.samples, target_state.mean, target_state.covariance)
+        empirical_mean = np.mean(state_next.samples, axis=1)
+        empirical_cov = np.cov(state_next.samples)
+
+        res = np.linalg.norm(empirical_mean-target_state.mean) + np.linalg.norm(empirical_cov-target_state.covariance)
 
         # normalize result
-        res = (res-self.min_reward) / (self.max_reward-self.min_reward)
+        res = (res-self.min_cost) / (self.max_cost-self.min_cost)
 
         return res
     
@@ -197,6 +205,8 @@ class State:
         self.dim_state = None
         self.num_samples = None
         self.samples = None
+        self.mean = None
+        self.covariance = None
 
     """
         Sets the state's particle set using a provided particle set
@@ -208,6 +218,9 @@ class State:
         self.num_samples = samples.shape[1]
         self.samples = samples
 
+        self.mean = np.mean(samples, axis=1)
+        self.covariance = np.cov(samples)
+
     """
         Sets the state's particle set by sampling a given Gaussian for a given
         number of samples
@@ -217,6 +230,9 @@ class State:
         self.samples = np.random.multivariate_normal(mean=mean, cov=covariance, size=self.num_samples).T
         self.dim_state = self.samples.shape[0]
 
+        self.mean = mean
+        self.covariance = covariance
+
     """
         Performs the transition from the current state to a new state using the provided
         controller
@@ -225,7 +241,7 @@ class State:
         us = np.matmul(controller[0], self.samples) + controller[1]
 
         A = np.eye(self.dim_state)
-        B = 0.1*np.eye(self.dim_state)
+        B = np.eye(self.dim_state)
 
         next_samples = np.matmul(A, self.samples) + np.matmul(B, us)
         next_state = State()
@@ -241,27 +257,34 @@ class State:
 ##########################################################################################
 
 # Example usage
-num_steps = 100
+num_steps = 50
 state = State()
-state.sample(mean = np.array([10, 10]), covariance=np.eye(2), num_samples=20)
+state.sample(mean = np.array([10, 10]), covariance=np.eye(2), num_samples=1000)
 root = Node(state)
 
 target_state = State()
-target_state.sample(mean = np.array([-1, 1]), covariance=3*np.eye(2), num_samples=20)
+target_state.sample(mean = np.array([-10, -5]), covariance=3*np.eye(2), num_samples=1000)
 
 mcts = MCTS(target_state, iterations=10000)
-# KLs = [two_sample_kl_estimator(target_state, state)]
-norms = []
+wasserst_dists = []
+
 # Main Loop
 for t in tqdm(range(num_steps)):
     next_action, next_root = mcts.plan(root)
     root = next_root
+
     plt.plot(root.state.samples[0, :], root.state.samples[1, :], '*')
     plt.xlim(-15, 15)
     plt.ylim(-15, 15)
-    plt.show()
-    # KLs.append(two_sample_kl_estimator(target_state, state))
-    norms.append(np.mean(np.linalg.norm(root.state.samples, axis=0)))
+    
+    file_dir = os.path.dirname(os.path.realpath(__file__))
+    log_dir = os.path.join(file_dir, "results")
+    os.chdir(log_dir)
+    plt.savefig(f"step_{t}.png")
+    plt.close()
 
-plt.plot(range(num_steps), norms)
+    # KLs.append(two_sample_kl_estimator(target_state, state))
+    wasserst_dists.append( np.linalg.norm(root.state.mean-target_state.mean) + np.linalg.norm(root.state.covariance-target_state.covariance))
+
+plt.plot(range(num_steps), wasserst_dists)
 plt.show()

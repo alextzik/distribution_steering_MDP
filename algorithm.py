@@ -5,12 +5,13 @@
 
 import math
 import numpy as np
+from sklearn.covariance import EmpiricalCovariance
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 
 import parameters as pars
-from utils import two_sample_kl_estimator, wasserstein_dist
+from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal
 
 # The class used to model the nodes in MCTS
 class Node:
@@ -33,7 +34,7 @@ class Node:
 
         self.action = action
         if not(action): # if node is root node
-            self.action = [np.zeros(shape=(self.state.dim_state, self.state.dim_state)), np.zeros(shape=(self.state.dim_state, 1))]
+            self.action = [np.zeros(shape=(self.state.dim_input, self.state.dim_state)), np.zeros(shape=(self.state.dim_input, 1))]
 
         self.children = []
         self.visits = 1 # initialize to 1 to avoid division by 0 in _action_prog_widen()
@@ -49,8 +50,11 @@ class Node:
         K_mean = self.action[0]
         b_mean = self.action[1]
 
-        prop_K = np.random.normal(size=K_mean.shape)
-        prop_b = np.random.normal(size=b_mean.shape)
+        # prop_K = np.random.normal(size=K_mean.shape)
+        # prop_b = np.random.normal(size=b_mean.shape)
+
+        prop_K = np.random.uniform(low=-1., high=1., size=K_mean.shape)
+        prop_b = np.random.uniform(low=-1., high=1., size=b_mean.shape)
 
         new_K = prop_K
         new_b = prop_b
@@ -157,20 +161,6 @@ class MCTS:
         for child in node.children
         ]
 
-        # print(len(choices_weights))
-        # print()
-        # print([
-        # child.value 
-        # for child in node.children
-        # ])
-
-        # print([
-        # self.c_param * math.sqrt(math.log(node.visits) / child.visits)
-        # for child in node.children
-        # ])
-
-        # print()
-
         return node.children[choices_weights.index(min(choices_weights))]
     
     """
@@ -188,11 +178,10 @@ class MCTS:
         # KL_div = two_sample_kl_estimator(self.target_state, state_next)
         
         # res = np.mean(np.linalg.norm(next_node.state.samples, axis=0))
-        # res = wasserstein_dist(state_next.samples, target_state.mean, target_state.covariance)
-        empirical_mean = np.mean(state_next.samples, axis=1)
-        empirical_cov = np.cov(state_next.samples)
+        
+        res = compute_wasserstein_dist(state_next.samples, self.target_state.mean, self.target_state.covariance)
 
-        res = np.linalg.norm(empirical_mean-target_state.mean) + np.linalg.norm(empirical_cov-target_state.covariance)
+        # res = np.linalg.norm(state_next.mean-target_state.mean) + np.linalg.norm(state_next.covariance-target_state.covariance)
 
         # normalize result
         res = (res-self.min_cost) / (self.max_cost-self.min_cost)
@@ -203,6 +192,7 @@ class MCTS:
 class State:
     def __init__(self):
         self.dim_state = None
+        self.dim_input = 2
         self.num_samples = None
         self.samples = None
         self.mean = None
@@ -219,7 +209,8 @@ class State:
         self.samples = samples
 
         self.mean = np.mean(samples, axis=1)
-        self.covariance = np.cov(samples)
+        
+        self.covariance = EmpiricalCovariance(assume_centered=False).fit(samples.T).covariance_
 
     """
         Sets the state's particle set by sampling a given Gaussian for a given
@@ -240,8 +231,11 @@ class State:
     def transition(self, controller):
         us = np.matmul(controller[0], self.samples) + controller[1]
 
-        A = np.eye(self.dim_state)
-        B = np.eye(self.dim_state)
+        # A = np.eye(self.dim_state)
+        # B = 0.1*np.eye(self.dim_state)
+        dt = 0.1
+        A = np.array([[1, dt], [0, 1]])
+        B = np.array([[dt, 0], [0, dt]])
 
         next_samples = np.matmul(A, self.samples) + np.matmul(B, us)
         next_state = State()
@@ -259,21 +253,27 @@ class State:
 # Example usage
 num_steps = 50
 state = State()
-state.sample(mean = np.array([10, 10]), covariance=np.eye(2), num_samples=1000)
+init_mean = np.array([-5, 5])
+init_cov = np.eye(2)
+state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 root = Node(state)
 
 target_state = State()
-target_state.sample(mean = np.array([-10, -5]), covariance=3*np.eye(2), num_samples=1000)
+target_mean = np.array([8, 9])
+target_cov = np.array([[2, 1.5], [1.5, 2]])
+target_state.sample(mean = target_mean, covariance=target_cov, num_samples=1000)
 
 mcts = MCTS(target_state, iterations=10000)
 wasserst_dists = []
 
 # Main Loop
 for t in tqdm(range(num_steps)):
-    next_action, next_root = mcts.plan(root)
-    root = next_root
 
     plt.plot(root.state.samples[0, :], root.state.samples[1, :], '*')
+    plot_level_curves_normal(target_mean, target_cov, "viridis")
+    plot_level_curves_normal(init_mean, init_cov, "viridis")
+    plt.xlabel("x")
+    plt.ylabel("y")
     plt.xlim(-15, 15)
     plt.ylim(-15, 15)
     
@@ -283,8 +283,13 @@ for t in tqdm(range(num_steps)):
     plt.savefig(f"step_{t}.png")
     plt.close()
 
+    next_action, next_root = mcts.plan(root)
+    root = next_root
+
     # KLs.append(two_sample_kl_estimator(target_state, state))
-    wasserst_dists.append( np.linalg.norm(root.state.mean-target_state.mean) + np.linalg.norm(root.state.covariance-target_state.covariance))
+    wasserst_dists.append(compute_wasserstein_dist(root.state.samples, mcts.target_state.mean, mcts.target_state.covariance))
 
 plt.plot(range(num_steps), wasserst_dists)
+plt.ylabel("Instantaneous Cost (Wasserstein Distance)")
+plt.xlabel("Timestep")
 plt.show()

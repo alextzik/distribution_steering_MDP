@@ -5,6 +5,9 @@
 
 import numpy as np
 import scipy as sp
+from scipy.stats import multivariate_normal
+import matplotlib.pyplot as plt
+
 
 """
     Computes the KL divergence between two sample sets
@@ -45,7 +48,7 @@ def two_sample_kl_estimator(state1, state2):
         - target mean: np.array
         - target covariance: np.array
 """
-def wasserstein_dist(samples, mean, covariance):
+def compute_wasserstein_dist(samples, mean, covariance):
     empirical_mean = np.mean(samples, axis=1)
     empirical_cov = np.cov(samples)
     
@@ -55,3 +58,22 @@ def wasserstein_dist(samples, mean, covariance):
     dist = np.sqrt(dist)
 
     return dist
+
+"""
+    Plot level curves of Normal Distribution
+"""
+def plot_level_curves_normal(mean, covar, color):
+    # Create a grid of (x, y) values
+    x = np.linspace(mean[0]-10, mean[0]+10, 100)
+    y = np.linspace(mean[1]-10, mean[1]+10, 100)
+    X, Y = np.meshgrid(x, y)
+    pos = np.dstack((X, Y))
+
+    # Create the multivariate normal distribution
+    rv = multivariate_normal(mean, covar)
+
+    # Calculate the probability density function (pdf) values
+    Z = rv.pdf(pos)
+
+    # Plot the contour plot
+    plt.contour(X, Y, Z, levels=20, cmap=color) 

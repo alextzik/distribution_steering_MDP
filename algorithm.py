@@ -1,8 +1,16 @@
+"""
+    Developed by Alexandros Tzikas
+                alextzik@stanford.edu
+
+"""
+
 ##########################################################################################
 #                                  IMPLEMENTATION OF THE                                 #
 #                                   PROPOSED ALGORITHM                                   #       
 ##########################################################################################
 
+##########################################################################################
+# Dependencies
 import math
 import numpy as np
 from sklearn.covariance import EmpiricalCovariance
@@ -10,48 +18,134 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
 
-import parameters as pars
-from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal
+from typing import Callable
 
-# The class used to model the nodes in MCTS
-class Node:
+import parameters as pars
+from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist
+
+
+##########################################################################################
+class dynamics:
     """
+        This class represents the dynamics equations for the state evolution
+
+        args:
+            - dim_state [int]: the dimension of the state
+            - dim_input [int]: the dimension of the input
+            - dyn_func [function]: propagates a state sample, using an input, according to the dynamics
+    """
+    def __init__(self, dim_state:int, dim_input, dyn_func:Callable[[np.ndarray, np.ndarray], np.ndarray]) -> None:
+        self.dim_state = dim_state
+        self.dim_input = dim_input
+        self.dyn_func  = dyn_func
+
+class State:
+    def __init__(self) -> None:
+        """This class contains the set of samples for a given node in the tree search.
+        
+            pars:
+                - dim_state [int]: dimensionality of state
+                - num_samples [int]: number of available samples
+                - samples [(dim_state, num_samples) np.array]: the samples as columns of an array
+        """
+        self.dim_state = None
+        self.num_samples = None
+        self.samples = None
+
+    def set(self, samples:np.ndarray) -> None:
+        """
+            Sets the state's particle set using a provided particle set
+            args:
+                - samples [(dim, num_samples) np.array]: contains the samples as columns
+        """
+        self.dim_state = samples.shape[0]
+        self.num_samples = samples.shape[1]
+        self.samples = samples
+
+    def sample(self, mean:np.ndarray, covariance:np.ndarray, num_samples:int) -> None:
+        """
+        Sets the state's particle set by sampling a given Gaussian for a given
+        number of samples
+
+        args: 
+                - mean [1d np.array]: the mean of the distribution
+                - covariance [2d np.ndarray]: the covariance of the distribution
+                - num_samples [int]: number of samples
+        """
+        self.num_samples = num_samples
+        self.samples = np.random.multivariate_normal(mean=mean, cov=covariance, size=self.num_samples).T
+        self.dim_state = self.samples.shape[0]
+
+def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:dynamics) -> State:
+    """
+    Performs the transition from the current state to a new state using the provided
+    controller
+
+    args:
+            -  state [State]: the current state
+            -  controller [tuple]: the matrix and bias for the controller
+            -  dynamics [dynamics]: the dynamics instance
+    
+    return:
+            - the next state
+    """
+
+    # next_samples = np.zeros(shape=(state.dim_state, state.num_samples))
+
+    dt = 0.1
+    A = np.array([[1, dt], [0, 1]])
+    B = np.array([[dt, 0], [0, dt]])
+
+    next_samples = A@state.samples + B@(controller[0]@state.samples + controller[1])
+
+    # for sample_idx in range(state.num_samples):
+    #     sample = state.samples[:, sample_idx].reshape(-1,1)
+    #     next_samples[:, sample_idx] = dynamics.dyn_func(sample, controller[0]@sample + controller[1]).reshape(-1,)
+
+    next_state = State()
+    next_state.set(next_samples)
+
+    return next_state
+
+class Node:
+
+    def __init__(self, state, dynamics:dynamics, parent=None, action=None):
+        """The class used for the nodes of the MCTS
+
         args:
             - state: (instance of class State)
+            - dynamics [dynamics]: instance of the dynamics
             - parent: (instance of class Node)
-            - action: (list[K, b]) [we assume affine controllers]
+            - action: (list[K, b]) [we assume affine controllers]  action followed at the parent node to reach it (list[K, b])
+        
         A node is determined by:
-            - self.state: includes the set of particles (instance of class State)
+            - self.state: the state of the current node -- includes the set of particles (instance of class State)
             - self.parent node: parent node of current node (instance of class Node)
             - self.action: action followed at the parent node to reach it (list[K, b])
             - self.children: child nodes from current node (list[Node])
             - self.visits: number of times node is visited (int)
             - self.value: the node's Q-value (float)
-    """
-    def __init__(self, state, parent=None, action=None):
+        """
         self.state = state
         self.parent = parent
 
         self.action = action
         if not(action): # if node is root node
-            self.action = [np.zeros(shape=(self.state.dim_input, self.state.dim_state)), np.zeros(shape=(self.state.dim_input, 1))]
+            self.action = [np.zeros(shape=(dynamics.dim_input, dynamics.dim_state)), np.zeros(shape=(dynamics.dim_input, 1))]
 
         self.children = []
         self.visits = 1 # initialize to 1 to avoid division by 0 in _action_prog_widen()
         self.value = 0.
 
-    """
-        Samples an action that will lead to a new child node: 
-            we choose to sample around the controller used to arrive to the current node 
-            because we do not expect consecutive optimal control policies to be 
-            very different from each other
-    """
+        self.dynamics = dynamics
+
     def sample_action(self):
+        """
+        Samples an action that will lead to a new child node
+        """
+
         K_mean = self.action[0]
         b_mean = self.action[1]
-
-        # prop_K = np.random.normal(size=K_mean.shape)
-        # prop_b = np.random.normal(size=b_mean.shape)
 
         prop_K = np.random.uniform(low=-1., high=1., size=K_mean.shape)
         prop_b = np.random.uniform(low=-1., high=1., size=b_mean.shape)
@@ -62,9 +156,9 @@ class Node:
         new_action = [new_K, new_b]
         return new_action
 
-# The MCTS algorithm
 class MCTS:
-    """
+    def __init__(self, target_state:State, iterations:int=1000):
+        """
         The MCTS algorithm is determined by the following parameters:
             - self.iterations: num of simulations to carry out
             - self.target_state: state consisting of samples from the target distribution (insance of State)
@@ -76,8 +170,7 @@ class MCTS:
             - the cost normalizing parameters:
                 - self.min_reward
                 - self.max_reward
-    """
-    def __init__(self, target_state, iterations=1000):
+        """
         self.iterations = iterations
 
         self.target_state = target_state
@@ -96,17 +189,16 @@ class MCTS:
         self.min_cost = pars.MIN_COST
         self.max_cost = pars.MAX_COST
 
-    """
+    def plan(self, root) -> tuple[tuple[np.ndarray, np.ndarray], float]:
+        """
         Deploys MCTS starting from an initial state at the root
             args: 
                 root: (instance of class Node)
         It creates the root node of the tree and performs a number of 
             self.iterations simulations from the root node.
         It then computes the child node of the root with the highest Q-value and outputs the action that led to that 
-            as the best action to take at the root node.
-    """
-    def plan(self, root):
-
+            as the best action to take at the root node along with the value
+        """
         for _ in range(self.iterations):
             self._simulate(root, self.depth)
             root.visits += 1
@@ -116,18 +208,18 @@ class MCTS:
                         
         return root.children[choices_weights.index(min(choices_weights))].action, root.children[choices_weights.index(min(choices_weights))]
 
-    """
+    def _simulate(self, node:Node, depth:int) -> float:
+        """
         Performs one simulation of MCTS and expands the tree. 
         args:
             node (instance of class Node)
-            depth (int)
+            depth (int): how many more levels to go down in the tree
 
         This is done recursively. The basis of this method is the POMCPOW algorithm from
             "Online algorithms for POMDPs with continuous state, action, and observation spaces"
                 Sunberg et al.
-        
-    """
-    def _simulate(self, node, depth):
+
+        """
         # print(len(node.children))
         if depth == 0:
             return 0
@@ -142,17 +234,18 @@ class MCTS:
 
         return q
 
-    """
+
+    def _action_prog_widen(self, node:Node) -> Node:
+        """
         Selects a controller to branch out with in the MCTS tree, starting at
          node (instance of Node).
-    """
-    def _action_prog_widen(self, node):
+        """
         # print(len(node.children), self.ka*node.visits**(self.ao))
         if len(node.children) <= self.ka*node.visits**(self.ao):
         # if len(node.children) <= 10:
             new_action = node.sample_action()
-            new_state = node.state.transition(new_action)
-            new_child = Node(new_state, node, new_action)
+            new_state = transition(node.state, new_action, node.dynamics)
+            new_child = Node(new_state, node.dynamics, node, new_action)
 
             node.children.append(new_child)
 
@@ -179,7 +272,10 @@ class MCTS:
         
         # res = np.mean(np.linalg.norm(next_node.state.samples, axis=0))
         
-        res = compute_wasserstein_dist(state_next.samples, self.target_state.mean, self.target_state.covariance)
+        # res = compute_wasserstein_dist(state_next.samples, self.target_state.mean, self.target_state.covariance)
+
+        res = compute_heur_dist(state_next.samples, self.target_state.samples)
+
 
         # res = np.linalg.norm(state_next.mean-target_state.mean) + np.linalg.norm(state_next.covariance-target_state.covariance)
 
@@ -188,62 +284,6 @@ class MCTS:
 
         return res
     
-# Example game state class
-class State:
-    def __init__(self):
-        self.dim_state = None
-        self.dim_input = 2
-        self.num_samples = None
-        self.samples = None
-        self.mean = None
-        self.covariance = None
-
-    """
-        Sets the state's particle set using a provided particle set
-        args:
-            - samples: np.array[dim, num_samples] containing the samples as columns
-    """
-    def set(self, samples):
-        self.dim_state = samples.shape[0]
-        self.num_samples = samples.shape[1]
-        self.samples = samples
-
-        self.mean = np.mean(samples, axis=1)
-        
-        self.covariance = EmpiricalCovariance(assume_centered=False).fit(samples.T).covariance_
-
-    """
-        Sets the state's particle set by sampling a given Gaussian for a given
-        number of samples
-    """
-    def sample(self, mean, covariance, num_samples):
-        self.num_samples = num_samples
-        self.samples = np.random.multivariate_normal(mean=mean, cov=covariance, size=self.num_samples).T
-        self.dim_state = self.samples.shape[0]
-
-        self.mean = mean
-        self.covariance = covariance
-
-    """
-        Performs the transition from the current state to a new state using the provided
-        controller
-    """
-    def transition(self, controller):
-        us = np.matmul(controller[0], self.samples) + controller[1]
-
-        # A = np.eye(self.dim_state)
-        # B = 0.1*np.eye(self.dim_state)
-        dt = 0.1
-        A = np.array([[1, dt], [0, 1]])
-        B = np.array([[dt, 0], [0, dt]])
-
-        next_samples = np.matmul(A, self.samples) + np.matmul(B, us)
-        next_state = State()
-        next_state.set(next_samples)
-
-        return next_state
-
-
 ##########################################################################################
 ##########################################################################################
 #                                      METHOD DEPLOYMENT                                 #
@@ -251,20 +291,33 @@ class State:
 ##########################################################################################
 
 # Example usage
+    
+def dyn_func(x, u):
+    dt = 0.1
+    A = np.array([[1, dt], [0, 1]])
+    B = np.array([[dt, 0], [0, dt]])
+
+    x_next = A@x + B@u
+
+    return x_next
+
+dyns = dynamics(2, 2, dyn_func)
+
 num_steps = 50
 state = State()
 init_mean = np.array([-5, 5])
 init_cov = np.eye(2)
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
-root = Node(state)
+root = Node(state, dyns)
 
 target_state = State()
 target_mean = np.array([8, 9])
 target_cov = np.array([[2, 1.5], [1.5, 2]])
 target_state.sample(mean = target_mean, covariance=target_cov, num_samples=1000)
 
-mcts = MCTS(target_state, iterations=10000)
+mcts = MCTS(target_state, iterations=1000)
 wasserst_dists = []
+
 
 # Main Loop
 for t in tqdm(range(num_steps)):
@@ -287,7 +340,8 @@ for t in tqdm(range(num_steps)):
     root = next_root
 
     # KLs.append(two_sample_kl_estimator(target_state, state))
-    wasserst_dists.append(compute_wasserstein_dist(root.state.samples, mcts.target_state.mean, mcts.target_state.covariance))
+    wasserst_dists.append(compute_heur_dist(root.state.samples, mcts.target_state.samples))
+    # wasserst_dists.append(compute_wasserstein_dist(root.state.samples, np.mean(mcts.target_state.samples, axis=1), np.cov(mcts.target_state.samples)))
 
 plt.plot(range(num_steps), wasserst_dists)
 plt.ylabel("Instantaneous Cost (Wasserstein Distance)")

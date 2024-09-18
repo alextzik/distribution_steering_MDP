@@ -13,4 +13,4 @@ APW_KA = 1.3
 APW_A0 = 0.5
 
 MIN_COST = 0.
-MAX_COST = 25.
+MAX_COST = 1000.

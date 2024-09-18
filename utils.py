@@ -59,6 +59,33 @@ def compute_wasserstein_dist(samples, mean, covariance):
 
     return dist
 
+
+def compute_heur_dist(samples:np.ndarray, target_samples:np.ndarray) -> float:
+    dim_state = samples.shape[0]
+
+    num_halfpsaces = 100
+
+    target_mean = np.mean(target_samples, axis=1)
+    target_cov  = np.cov(target_samples)
+
+    qs = np.random.multivariate_normal(np.zeros(shape=(dim_state, )), np.eye(dim_state), size=(num_halfpsaces, )).T
+    bs = (- qs.T@ target_mean).reshape([-1,])
+
+    res = 0.
+
+    for i in range(num_halfpsaces):
+        q = qs[:, i].reshape(-1,1)
+        b = bs[i]
+
+        val = np.sum(q.T@samples + b >=0)/samples.shape[1]
+        target_val = np.sum(q.T@target_samples + b >=0)/target_samples.shape[1]
+       
+        res += np.abs(val - target_val)
+
+    
+    return res
+
+
 """
     Plot level curves of Normal Distribution
 """

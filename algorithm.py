@@ -71,7 +71,7 @@ class target_density:
 
             for c in range(len(self.weights)):
                 r_mean = q.T@self.means[c].reshape(-1,1) + b
-                r_cov = q.T@self.covs@q
+                r_cov = q.T@self.covs[c]@q
 
                 prob_content += self.weights[c]*(1-norm.cdf(0., r_mean, r_cov))
 

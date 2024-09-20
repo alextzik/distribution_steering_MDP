@@ -17,6 +17,7 @@ from sklearn.covariance import EmpiricalCovariance
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
+from scipy.stats import norm
 
 from typing import Callable
 
@@ -34,10 +35,49 @@ class dynamics:
             - dim_input [int]: the dimension of the input
             - dyn_func [function]: propagates a state sample, using an input, according to the dynamics
     """
-    def __init__(self, dim_state:int, dim_input, dyn_func:Callable[[np.ndarray, np.ndarray], np.ndarray]) -> None:
+    def __init__(self, dim_state:int, dim_input:int, dyn_func:Callable[[np.ndarray, np.ndarray], np.ndarray]) -> None:
         self.dim_state = dim_state
         self.dim_input = dim_input
         self.dyn_func  = dyn_func
+
+class target_density:
+    def __init__(self, weights:list, means:list, covs:list) -> None:
+        """
+            This class characterizes the target density as a GMM
+
+            args:
+                - weights list[float]: the weight of each component
+                - means list[1d np.ndarray]: the means of the components
+                - covs list[2d np.ndarray]: the covs of the components
+        """
+
+        self.weights = weights
+        self.means = means
+        self.covs = covs
+
+    def compute_prob_contents(self, qs:np.ndarray, bs:np.ndarray) -> None:
+        """
+            Compute the prob content of the GMM in the halfspaces dictated by qs and bs
+
+            qs [(dim, num_half-spaces) np.ndarray]: the normal vectors
+            bs [(num_halfspaces, 1) np.ndarray]: the offsets
+        """
+        prob_contents = []
+        for i in range(qs.shape[1]):
+            prob_content = 0.
+
+            q = qs[:, i].reshape(-1,1)
+            b = bs[i, :]
+
+            for c in range(len(self.weights)):
+                r_mean = q.T@self.means[c].reshape(-1,1) + b
+                r_cov = q.T@self.covs@q
+
+                prob_content += self.weights[c]*(1-norm.cdf(0., r_mean, r_cov))
+
+            prob_contents.append(prob_content.item())
+
+        self.prob_contents = prob_contents
 
 class State:
     def __init__(self) -> None:
@@ -92,9 +132,12 @@ def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:d
 
     # next_samples = np.zeros(shape=(state.dim_state, state.num_samples))
 
-    dt = 0.1
-    A = np.array([[1, dt], [0, 1]])
-    B = np.array([[dt, 0], [0, dt]])
+    # dt = 0.1
+    # A = np.array([[1, dt], [0, 1]])
+    # B = np.array([[0, dt]]).reshape(-1,1)
+
+    A = np.eye(2)
+    B = 0.1*np.eye(2)
 
     next_samples = A@state.samples + B@(controller[0]@state.samples + controller[1])
 
@@ -109,7 +152,7 @@ def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:d
 
 class Node:
 
-    def __init__(self, state, dynamics:dynamics, parent=None, action=None):
+    def __init__(self, state:State, dynamics:dynamics, parent=None, action:list=None):
         """The class used for the nodes of the MCTS
 
         args:
@@ -135,7 +178,7 @@ class Node:
 
         self.children = []
         self.visits = 1 # initialize to 1 to avoid division by 0 in _action_prog_widen()
-        self.value = 0.
+        self.value = 1.
 
         self.dynamics = dynamics
 
@@ -144,32 +187,28 @@ class Node:
         Samples an action that will lead to a new child node
         """
 
-        K_mean = self.action[0]
-        b_mean = self.action[1]
+        K_node = self.action[0]
+        b_node = self.action[1]
 
-        prop_K = np.random.uniform(low=-1., high=1., size=K_mean.shape)
-        prop_b = np.random.uniform(low=-1., high=1., size=b_mean.shape)
+        prop_K = np.random.uniform(low=-1., high=1., size=K_node.shape)
+        prop_b = np.random.uniform(low=-1., high=1., size=b_node.shape)
 
-        new_K = prop_K
-        new_b = prop_b
-
-        new_action = [new_K, new_b]
+        new_action = [prop_K, prop_b]
         return new_action
 
 class MCTS:
-    def __init__(self, target_state:State, iterations:int=1000):
+    def __init__(self, target_state:target_density, qs:np.ndarray, bs:np.ndarray, iterations:int=1000):
         """
         The MCTS algorithm is determined by the following parameters:
             - self.iterations: num of simulations to carry out
-            - self.target_state: state consisting of samples from the target distribution (insance of State)
+            - self.target_state: state consisting of samples from the target distribution (instance of State)
             - self.depth: max depth of the search tree
             - self.c_param: the UCB heuristic parameter that encourages exploration
             - the action_prog_widen parameters:
                 - self.ka
                 - self.ao
-            - the cost normalizing parameters:
-                - self.min_reward
-                - self.max_reward
+            - qs: the normal vectors for the halfspaces in the distance heuristic
+            - bs: the offsets for the halfspaces in the distance heuristic
         """
         self.iterations = iterations
 
@@ -185,20 +224,21 @@ class MCTS:
         self.ka = pars.APW_KA
         self.ao = pars.APW_A0
 
-        # constants for normalizing cost between 0 and 1
-        self.min_cost = pars.MIN_COST
-        self.max_cost = pars.MAX_COST
+        # distance heuristic
+        self.qs = qs
+        self.bs = bs
 
-    def plan(self, root) -> tuple[tuple[np.ndarray, np.ndarray], float]:
+    def plan(self, root:Node) -> tuple[tuple[np.ndarray, np.ndarray], float]:
         """
-        Deploys MCTS starting from an initial state at the root
+        Deploys MCTS starting from an initial node at the root
             args: 
                 root: (instance of class Node)
-        It creates the root node of the tree and performs a number of 
+        It starts at the root node of the tree and performs a number of 
             self.iterations simulations from the root node.
-        It then computes the child node of the root with the highest Q-value and outputs the action that led to that 
+        It then computes the child node of the root with the lowest Q-value (Q here denotes cost) and outputs the action that led to that 
             as the best action to take at the root node along with the value
         """
+
         for _ in range(self.iterations):
             self._simulate(root, self.depth)
             root.visits += 1
@@ -241,11 +281,12 @@ class MCTS:
          node (instance of Node).
         """
         # print(len(node.children), self.ka*node.visits**(self.ao))
-        if len(node.children) <= self.ka*node.visits**(self.ao):
-        # if len(node.children) <= 10:
+        # if len(node.children) <= self.ka*node.visits**(self.ao):
+        if len(node.children) <= 40:
             new_action = node.sample_action()
             new_state = transition(node.state, new_action, node.dynamics)
             new_child = Node(new_state, node.dynamics, node, new_action)
+            new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
 
             node.children.append(new_child)
 
@@ -262,10 +303,8 @@ class MCTS:
             node: parent node (instance of Node)
             next_node: next node (instance of Node)
     """
-    def _cost(self, node, next_node):
-        action = next_node.action
+    def _cost(self, node:Node, next_node:Node):
 
-        state_prev = node.state
         state_next = next_node.state
 
         # KL_div = two_sample_kl_estimator(self.target_state, state_next)
@@ -274,13 +313,10 @@ class MCTS:
         
         # res = compute_wasserstein_dist(state_next.samples, self.target_state.mean, self.target_state.covariance)
 
-        res = compute_heur_dist(state_next.samples, self.target_state.samples)
-
+        res = compute_heur_dist(state_next.samples, self.target_state, self.qs, self.bs)
+        # res = compute_wasserstein_dist(state_next.samples, self.target_state.means[0], self.target_state.covs[0])
 
         # res = np.linalg.norm(state_next.mean-target_state.mean) + np.linalg.norm(state_next.covariance-target_state.covariance)
-
-        # normalize result
-        res = (res-self.min_cost) / (self.max_cost-self.min_cost)
 
         return res
     
@@ -293,9 +329,12 @@ class MCTS:
 # Example usage
     
 def dyn_func(x, u):
-    dt = 0.1
-    A = np.array([[1, dt], [0, 1]])
-    B = np.array([[dt, 0], [0, dt]])
+    # dt = 0.1
+    # A = np.array([[1, dt], [0, 1]])
+    # B = np.array([[0, dt]]).reshape(-1,1)
+
+    A = np.eye(2)
+    B = 0.1*np.eye(2)
 
     x_next = A@x + B@u
 
@@ -303,32 +342,48 @@ def dyn_func(x, u):
 
 dyns = dynamics(2, 2, dyn_func)
 
-num_steps = 50
+num_steps = 100
+
+# intiial state
 state = State()
-init_mean = np.array([-5, 5])
+init_mean = np.array([10., 10.])
 init_cov = np.eye(2)
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 root = Node(state, dyns)
 
-target_state = State()
-target_mean = np.array([8, 9])
-target_cov = np.array([[2, 1.5], [1.5, 2]])
-target_state.sample(mean = target_mean, covariance=target_cov, num_samples=1000)
 
-mcts = MCTS(target_state, iterations=1000)
-wasserst_dists = []
+
+# Target density
+target_means = [np.array([-10, 10])]
+target_covs = [np.array([[2, 1.5], [1.5, 2]])]
+target_weights = [1.]
+target_state = target_density(target_weights, target_means, target_covs)
+
+# Distance heuristic half-spaces    
+# qs = np.random.uniform(low=-1., high=1., size=(root.state.samples.shape[0], pars.NUM_HALFSPACES))
+angles = np.linspace(0, 360, pars.NUM_HALFSPACES, endpoint=False)  # Angles from 0 to 360 degrees
+# Calculate the unit vectors
+qs = np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
+
+bs = (-qs.T@target_means[0]).reshape(-1,1) + np.random.uniform(low=-3., high=3., size=(pars.NUM_HALFSPACES, 1))
+
+target_state.compute_prob_contents(qs, bs)
+
+#Setup MCTS
+mcts = MCTS(target_state, qs, bs, iterations=1000)
+dists = []
 
 
 # Main Loop
 for t in tqdm(range(num_steps)):
 
     plt.plot(root.state.samples[0, :], root.state.samples[1, :], '*')
-    plot_level_curves_normal(target_mean, target_cov, "viridis")
+    plot_level_curves_normal(target_state.means[0], target_state.covs[0], "viridis")
     plot_level_curves_normal(init_mean, init_cov, "viridis")
     plt.xlabel("x")
     plt.ylabel("y")
     plt.xlim(-15, 15)
-    plt.ylim(-15, 15)
+    plt.ylim(0., 30)
     
     file_dir = os.path.dirname(os.path.realpath(__file__))
     log_dir = os.path.join(file_dir, "results")
@@ -340,10 +395,11 @@ for t in tqdm(range(num_steps)):
     root = next_root
 
     # KLs.append(two_sample_kl_estimator(target_state, state))
-    wasserst_dists.append(compute_heur_dist(root.state.samples, mcts.target_state.samples))
+    dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
+    # dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
     # wasserst_dists.append(compute_wasserstein_dist(root.state.samples, np.mean(mcts.target_state.samples, axis=1), np.cov(mcts.target_state.samples)))
 
-plt.plot(range(num_steps), wasserst_dists)
-plt.ylabel("Instantaneous Cost (Wasserstein Distance)")
+plt.plot(range(num_steps), dists)
+plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")
 plt.show()

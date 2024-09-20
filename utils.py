@@ -7,7 +7,7 @@ import numpy as np
 import scipy as sp
 from scipy.stats import multivariate_normal
 import matplotlib.pyplot as plt
-
+import parameters as pars
 
 """
     Computes the KL divergence between two sample sets
@@ -60,29 +60,12 @@ def compute_wasserstein_dist(samples, mean, covariance):
     return dist
 
 
-def compute_heur_dist(samples:np.ndarray, target_samples:np.ndarray) -> float:
-    dim_state = samples.shape[0]
+def compute_heur_dist(samples:np.ndarray, target_state, qs:np.ndarray, bs:np.ndarray) -> float:
 
-    num_halfpsaces = 100
+    vals = np.sum(qs.T@samples + bs >=0, axis = 1)/samples.shape[1]
+        
+    res = np.sum(np.abs(vals - np.array(target_state.prob_contents)))/pars.NUM_HALFSPACES
 
-    target_mean = np.mean(target_samples, axis=1)
-    target_cov  = np.cov(target_samples)
-
-    qs = np.random.multivariate_normal(np.zeros(shape=(dim_state, )), np.eye(dim_state), size=(num_halfpsaces, )).T
-    bs = (- qs.T@ target_mean).reshape([-1,])
-
-    res = 0.
-
-    for i in range(num_halfpsaces):
-        q = qs[:, i].reshape(-1,1)
-        b = bs[i]
-
-        val = np.sum(q.T@samples + b >=0)/samples.shape[1]
-        target_val = np.sum(q.T@target_samples + b >=0)/target_samples.shape[1]
-       
-        res += np.abs(val - target_val)
-
-    
     return res
 
 

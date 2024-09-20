@@ -12,5 +12,6 @@ C_PARAMETER = np.sqrt(2)
 APW_KA = 1.3
 APW_A0 = 0.5
 
-MIN_COST = 0.
-MAX_COST = 1000.
+##########################################################################################
+# Distance heuristic
+NUM_HALFSPACES = 200

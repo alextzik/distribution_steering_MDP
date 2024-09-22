@@ -87,3 +87,10 @@ def plot_level_curves_normal(mean, covar, color):
 
     # Plot the contour plot
     plt.contour(X, Y, Z, levels=20, cmap=color) 
+
+
+def sample_orthogonal_mat(dim:int):
+    M = np.random.randn(dim, dim)
+    Q, R = np.linalg.qr(M)
+    L = np.sign(np.diag(R))
+    return Q*L[None,:]

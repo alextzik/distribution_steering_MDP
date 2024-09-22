@@ -23,7 +23,7 @@ from scipy.stats import norm
 from typing import Callable
 
 import parameters as pars
-from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist
+from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat
 
 
 ##########################################################################################
@@ -138,7 +138,7 @@ def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:d
     # B = np.array([[0, dt]]).reshape(-1,1)
 
     A = np.eye(2)
-    B = 0.1*np.eye(2)
+    B = 0.1*np.array([[1.5, 0.], [0., 0.8]])
 
     next_samples = A@state.samples + B@(controller[0]@state.samples + controller[1])
 
@@ -192,14 +192,20 @@ class Node:
         dim_input = self.action[0].shape[0]
         min_dim = np.minimum(dim_input, dim_state)
 
-        sample_V = ortho_group.rvs(dim=dim_state)
-        sample_U = ortho_group.rvs(dim=dim_input)
+        sample_V = sample_orthogonal_mat(dim=dim_state)
+        sample_U = sample_orthogonal_mat(dim=dim_input)
         sample_S = np.zeros(shape=(dim_input, dim_state))
         sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.5, size=(min_dim,))
 
-        prop_K = sample_U @ sample_S @ sample_V.T
-        prop_b = 0.0*np.random.uniform(low=-1., high=1., size=(dim_input, 1))
+        # theta = np.random.uniform(low=0., high=2*np.pi)
+        # rot_matrix = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+        # scale_coeff = np.random.uniform(low=0., high=1.)
 
+        prop_K = sample_U @ sample_S @ sample_V.T 
+        # prop_K = scale_coeff*rot_matrix
+        prop_b = 5*np.random.standard_normal(size=(dim_input, 1))
+
+        # prop_K = np.zeros(shape=(2,2))
         new_action = [prop_K, prop_b]
         return new_action
 
@@ -246,8 +252,8 @@ class MCTS:
             as the best action to take at the root node along with the value
         """
         for _ in range(self.iterations):
-            self._simulate(root, self.depth)
             root.visits += 1
+            self._simulate(root, self.depth)
 
         choices_weights = [child.value
                                 for child in root.children]
@@ -268,14 +274,14 @@ class MCTS:
         """
         # print(len(node.children))
         if depth == 0:
-            return 0.
+            return compute_heur_dist(node.state.samples, self.target_state, self.qs, self.bs)
 
         next_node = self._action_prog_widen(node)
 
         r = self._cost(node, next_node)
+        next_node.visits += 1
         q = r + self._simulate(next_node, depth-1)
         
-        next_node.visits += 1
         next_node.value += (q-next_node.value)/next_node.visits
 
         return q
@@ -288,13 +294,12 @@ class MCTS:
         """
         # print(len(node.children), self.ka*node.visits**(self.ao))
         # if len(node.children) <= self.ka*node.visits**(self.ao):
-        if len(node.children) <= 50:
+        if len(node.children) <= 100:
             new_action = node.sample_action()
             new_state = transition(node.state, new_action, node.dynamics)
             new_child = Node(new_state, node.dynamics, node, new_action)
             new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
-            #compute_wasserstein_dist(new_state.samples, self.target_state.means[0], self.target_state.covs[0])
-
+            # compute_wasserstein_dist(new_state.samples, self.target_state.means[0], self.target_state.covs[0])
             node.children.append(new_child)
 
         choices_weights = [
@@ -335,7 +340,7 @@ def dyn_func(x, u):
     # B = np.array([[0, dt]]).reshape(-1,1)
 
     A = np.eye(2)
-    B = 0.1*np.eye(2)
+    B = 0.1*np.array([[1.5, 0.], [0., 0.8]])
 
     x_next = A@x + B@u
 
@@ -343,7 +348,7 @@ def dyn_func(x, u):
 
 dyns = dynamics(2, 2, dyn_func)
 
-num_steps = 200
+num_steps = 50
 
 # intiial state
 state = State()
@@ -355,7 +360,7 @@ root = Node(state, dyns)
 
 
 # Target density
-target_means = [np.array([-5., -6.])]
+target_means = [np.array([5., 6.])]
 target_covs = [np.array([[2, 1.5], [1.5, 2]])]
 target_weights = [1.]
 target_state = target_density(target_weights, target_means, target_covs)
@@ -369,7 +374,7 @@ sqrt_min_eig = np.sqrt(np.min(np.linalg.eig(target_covs[0])[0]))
 qs = 0.5*sqrt_min_eig*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
 bs = np.zeros(shape=(pars.NUM_HALFSPACES, 1))
 for _ in range(pars.NUM_HALFSPACES):
-    point = target_means[0] - qs[:, _]
+    point = target_means[0] - qs[:, _] + sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
     bs[_, 0] = (-qs[:, _].reshape(1, -1)@point).item()
 
 # qs = np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
@@ -382,6 +387,7 @@ print(target_state.prob_contents)
 #Setup MCTS
 mcts = MCTS(target_state, qs, bs, iterations=1000)
 dists = []
+wass_dists = []
 
 
 # Main Loop
@@ -405,9 +411,11 @@ for t in tqdm(range(num_steps)):
     root = next_root
 
     dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
-    # dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
+    wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
 
-plt.plot(range(num_steps), dists)
+plt.plot(range(num_steps), dists, label="Heuristic")
+# plt.plot(range(num_steps), wass_dists, label="Wasserstein")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")
+plt.legend()
 plt.show()

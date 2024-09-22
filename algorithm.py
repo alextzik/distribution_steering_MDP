@@ -14,6 +14,7 @@
 import math
 import numpy as np
 from sklearn.covariance import EmpiricalCovariance
+from scipy.stats import ortho_group
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import os
@@ -187,11 +188,17 @@ class Node:
         Samples an action that will lead to a new child node
         """
 
-        K_node = self.action[0]
-        b_node = self.action[1]
+        dim_state = self.action[0].shape[1]
+        dim_input = self.action[0].shape[0]
+        min_dim = np.minimum(dim_input, dim_state)
 
-        prop_K = np.random.uniform(low=-1., high=1., size=K_node.shape)
-        prop_b = np.random.uniform(low=-1., high=1., size=b_node.shape)
+        sample_V = ortho_group.rvs(dim=dim_state)
+        sample_U = ortho_group.rvs(dim=dim_input)
+        sample_S = np.zeros(shape=(dim_input, dim_state))
+        sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.5, size=(min_dim,))
+
+        prop_K = sample_U @ sample_S @ sample_V.T
+        prop_b = 0.0*np.random.uniform(low=-1., high=1., size=(dim_input, 1))
 
         new_action = [prop_K, prop_b]
         return new_action
@@ -238,7 +245,6 @@ class MCTS:
         It then computes the child node of the root with the lowest Q-value (Q here denotes cost) and outputs the action that led to that 
             as the best action to take at the root node along with the value
         """
-
         for _ in range(self.iterations):
             self._simulate(root, self.depth)
             root.visits += 1
@@ -262,7 +268,7 @@ class MCTS:
         """
         # print(len(node.children))
         if depth == 0:
-            return 0
+            return 0.
 
         next_node = self._action_prog_widen(node)
 
@@ -282,11 +288,12 @@ class MCTS:
         """
         # print(len(node.children), self.ka*node.visits**(self.ao))
         # if len(node.children) <= self.ka*node.visits**(self.ao):
-        if len(node.children) <= 40:
+        if len(node.children) <= 50:
             new_action = node.sample_action()
             new_state = transition(node.state, new_action, node.dynamics)
             new_child = Node(new_state, node.dynamics, node, new_action)
             new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
+            #compute_wasserstein_dist(new_state.samples, self.target_state.means[0], self.target_state.covs[0])
 
             node.children.append(new_child)
 
@@ -307,16 +314,10 @@ class MCTS:
 
         state_next = next_node.state
 
-        # KL_div = two_sample_kl_estimator(self.target_state, state_next)
-        
         # res = np.mean(np.linalg.norm(next_node.state.samples, axis=0))
         
-        # res = compute_wasserstein_dist(state_next.samples, self.target_state.mean, self.target_state.covariance)
-
         res = compute_heur_dist(state_next.samples, self.target_state, self.qs, self.bs)
         # res = compute_wasserstein_dist(state_next.samples, self.target_state.means[0], self.target_state.covs[0])
-
-        # res = np.linalg.norm(state_next.mean-target_state.mean) + np.linalg.norm(state_next.covariance-target_state.covariance)
 
         return res
     
@@ -342,11 +343,11 @@ def dyn_func(x, u):
 
 dyns = dynamics(2, 2, dyn_func)
 
-num_steps = 100
+num_steps = 200
 
 # intiial state
 state = State()
-init_mean = np.array([10., 10.])
+init_mean = np.array([5., -5.])
 init_cov = np.eye(2)
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 root = Node(state, dyns)
@@ -354,20 +355,29 @@ root = Node(state, dyns)
 
 
 # Target density
-target_means = [np.array([-10, 10])]
+target_means = [np.array([-5., -6.])]
 target_covs = [np.array([[2, 1.5], [1.5, 2]])]
 target_weights = [1.]
 target_state = target_density(target_weights, target_means, target_covs)
 
 # Distance heuristic half-spaces    
 # qs = np.random.uniform(low=-1., high=1., size=(root.state.samples.shape[0], pars.NUM_HALFSPACES))
-angles = np.linspace(0, 360, pars.NUM_HALFSPACES, endpoint=False)  # Angles from 0 to 360 degrees
-# Calculate the unit vectors
-qs = np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
+# points = target_means[0].reshape(-1,1) + np.random.standard_normal(size=(target_means[0].shape[0], pars.NUM_HALFSPACES))
+# qs = np.zeros(shape=(target_means[0].shape[0], pars.NUM_HALFSPACES))
+angles = np.linspace(0, 360, num=pars.NUM_HALFSPACES, endpoint=False)
+sqrt_min_eig = np.sqrt(np.min(np.linalg.eig(target_covs[0])[0]))
+qs = 0.5*sqrt_min_eig*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
+bs = np.zeros(shape=(pars.NUM_HALFSPACES, 1))
+for _ in range(pars.NUM_HALFSPACES):
+    point = target_means[0] - qs[:, _]
+    bs[_, 0] = (-qs[:, _].reshape(1, -1)@point).item()
 
-bs = (-qs.T@target_means[0]).reshape(-1,1) + np.random.uniform(low=-3., high=3., size=(pars.NUM_HALFSPACES, 1))
+# qs = np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
+
+# bs = (-qs.T@target_means[0]).reshape(-1,1) + np.random.uniform(low=-3., high=3., size=(pars.NUM_HALFSPACES, 1))
 
 target_state.compute_prob_contents(qs, bs)
+print(target_state.prob_contents)
 
 #Setup MCTS
 mcts = MCTS(target_state, qs, bs, iterations=1000)
@@ -383,7 +393,7 @@ for t in tqdm(range(num_steps)):
     plt.xlabel("x")
     plt.ylabel("y")
     plt.xlim(-15, 15)
-    plt.ylim(0., 30)
+    plt.ylim(-15., 15.)
     
     file_dir = os.path.dirname(os.path.realpath(__file__))
     log_dir = os.path.join(file_dir, "results")
@@ -394,10 +404,8 @@ for t in tqdm(range(num_steps)):
     next_action, next_root = mcts.plan(root)
     root = next_root
 
-    # KLs.append(two_sample_kl_estimator(target_state, state))
     dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
     # dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
-    # wasserst_dists.append(compute_wasserstein_dist(root.state.samples, np.mean(mcts.target_state.samples, axis=1), np.cov(mcts.target_state.samples)))
 
 plt.plot(range(num_steps), dists)
 plt.ylabel("Instantaneous Cost")

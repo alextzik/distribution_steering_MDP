@@ -25,6 +25,8 @@ from typing import Callable
 import parameters as pars
 from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat
 
+plt.rcParams['font.family'] = 'Times New Roman'
+plt.rcParams['font.size'] = 15
 
 ##########################################################################################
 class dynamics:
@@ -68,13 +70,13 @@ class target_density:
             prob_content = 0.
 
             q = qs[:, i].reshape(-1,1)
-            b = bs[i, :]
+            b = bs[i, 0]
 
             for c in range(len(self.weights)):
                 r_mean = q.T@self.means[c].reshape(-1,1) + b
                 r_cov = q.T@self.covs[c]@q
 
-                prob_content += self.weights[c]*(1-norm.cdf(0., r_mean, r_cov))
+                prob_content += self.weights[c]*(1-norm.cdf(x=0., loc=r_mean, scale=np.sqrt(r_cov)))
 
             prob_contents.append(prob_content.item())
 
@@ -138,7 +140,7 @@ def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:d
     # B = np.array([[0, dt]]).reshape(-1,1)
 
     A = np.eye(2)
-    B = 0.1*np.array([[1.5, 0.], [0., 0.8]])
+    B = 0.1*np.array([[1., 0.], [0., 1.]])
 
     next_samples = A@state.samples + B@(controller[0]@state.samples + controller[1])
 
@@ -203,7 +205,7 @@ class Node:
 
         prop_K = sample_U @ sample_S @ sample_V.T 
         # prop_K = scale_coeff*rot_matrix
-        prop_b = 5*np.random.standard_normal(size=(dim_input, 1))
+        prop_b = 3*np.random.standard_normal(size=(dim_input, 1))
 
         # prop_K = np.zeros(shape=(2,2))
         new_action = [prop_K, prop_b]
@@ -299,7 +301,8 @@ class MCTS:
             new_state = transition(node.state, new_action, node.dynamics)
             new_child = Node(new_state, node.dynamics, node, new_action)
             new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
-            # compute_wasserstein_dist(new_state.samples, self.target_state.means[0], self.target_state.covs[0])
+            #compute_wasserstein_dist(new_state.samples, self.target_state.means[0], self.target_state.covs[0])
+            
             node.children.append(new_child)
 
         choices_weights = [
@@ -340,7 +343,7 @@ def dyn_func(x, u):
     # B = np.array([[0, dt]]).reshape(-1,1)
 
     A = np.eye(2)
-    B = 0.1*np.array([[1.5, 0.], [0., 0.8]])
+    B = 0.1*np.array([[1., 0.], [0., 1.]])
 
     x_next = A@x + B@u
 
@@ -348,38 +351,35 @@ def dyn_func(x, u):
 
 dyns = dynamics(2, 2, dyn_func)
 
-num_steps = 50
+num_steps = 150
 
 # intiial state
 state = State()
-init_mean = np.array([5., -5.])
-init_cov = np.eye(2)
+init_mean = np.array([0., 1.])
+init_cov = 10*np.eye(2)
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 root = Node(state, dyns)
 
 
 
 # Target density
-target_means = [np.array([5., 6.])]
-target_covs = [np.array([[2, 1.5], [1.5, 2]])]
+target_means = [np.array([10., 12.])]
+target_covs = [np.eye(2)]
 target_weights = [1.]
 target_state = target_density(target_weights, target_means, target_covs)
 
 # Distance heuristic half-spaces    
-# qs = np.random.uniform(low=-1., high=1., size=(root.state.samples.shape[0], pars.NUM_HALFSPACES))
-# points = target_means[0].reshape(-1,1) + np.random.standard_normal(size=(target_means[0].shape[0], pars.NUM_HALFSPACES))
-# qs = np.zeros(shape=(target_means[0].shape[0], pars.NUM_HALFSPACES))
 angles = np.linspace(0, 360, num=pars.NUM_HALFSPACES, endpoint=False)
-sqrt_min_eig = np.sqrt(np.min(np.linalg.eig(target_covs[0])[0]))
-qs = 0.5*sqrt_min_eig*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
+L = np.linalg.cholesky(target_covs[0])
+zs = 0.15*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
+points = target_means[0].reshape(-1,1) + L@zs
+plt.plot(points[0, :], points[1, :], '*')
+plt.show()
+qs = np.zeros(shape=(2, pars.NUM_HALFSPACES))
 bs = np.zeros(shape=(pars.NUM_HALFSPACES, 1))
 for _ in range(pars.NUM_HALFSPACES):
-    point = target_means[0] - qs[:, _] + sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
-    bs[_, 0] = (-qs[:, _].reshape(1, -1)@point).item()
-
-# qs = np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
-
-# bs = (-qs.T@target_means[0]).reshape(-1,1) + np.random.uniform(low=-3., high=3., size=(pars.NUM_HALFSPACES, 1))
+    qs[:, _] = target_means[0] - points[:, _] #+ sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
+    bs[_, 0] = (-qs[:, _].reshape(1, -1)@points[:, _]).item()
 
 target_state.compute_prob_contents(qs, bs)
 print(target_state.prob_contents)
@@ -394,12 +394,13 @@ wass_dists = []
 for t in tqdm(range(num_steps)):
 
     plt.plot(root.state.samples[0, :], root.state.samples[1, :], '*')
-    plot_level_curves_normal(target_state.means[0], target_state.covs[0], "viridis")
-    plot_level_curves_normal(init_mean, init_cov, "viridis")
+    plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
+    plot_level_curves_normal(init_mean, init_cov, "winter")
     plt.xlabel("x")
     plt.ylabel("y")
-    plt.xlim(-15, 15)
-    plt.ylim(-15., 15.)
+    plt.xlim(-10, 30)
+    plt.ylim(-10., 30.)
+    plt.axis('equal')
     
     file_dir = os.path.dirname(os.path.realpath(__file__))
     log_dir = os.path.join(file_dir, "results")
@@ -413,8 +414,9 @@ for t in tqdm(range(num_steps)):
     dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
     wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
 
-plt.plot(range(num_steps), dists, label="Heuristic")
-# plt.plot(range(num_steps), wass_dists, label="Wasserstein")
+
+plt.plot(range(num_steps), dists, label="Distance Heuristic (eq. 6)")
+plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")
 plt.legend()

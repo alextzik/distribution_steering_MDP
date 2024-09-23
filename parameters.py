@@ -8,7 +8,7 @@ import numpy as np
 ##########################################################################################
 # PROPOSED ALGORITHM
 TREE_DEPTH = 8
-C_PARAMETER = 1.2*np.sqrt(2)
+C_PARAMETER = 0.7*np.sqrt(2)
 APW_KA = 1.3
 APW_A0 = 0.5
 

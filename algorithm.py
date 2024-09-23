@@ -135,14 +135,25 @@ def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:d
 
     # next_samples = np.zeros(shape=(state.dim_state, state.num_samples))
 
-    # dt = 0.1
+    dt = 0.1
     # A = np.array([[1, dt], [0, 1]])
     # B = np.array([[0, dt]]).reshape(-1,1)
 
-    A = np.eye(2)
-    B = 0.1*np.array([[1., 0.], [0., 1.]])
+    # A = np.eye(2)
+    # B = 0.1*np.array([[1., 0.], [0., 1.]])
 
-    next_samples = A@state.samples + B@(controller[0]@state.samples + controller[1])
+    next_samples = np.zeros(shape=state.samples.shape)
+
+    us = controller[0]@state.samples+ controller[1]
+
+    for _ in range(state.samples.shape[1]):
+        x = state.samples[:, _]
+        u = us[:, _]
+        next_samples[:, _] = np.array([x[0] + dt*u[0]*np.cos(x[2]),
+                       x[1] + dt*u[0]*np.sin(x[2]),
+                       x[2] + u[1]*dt]).reshape(-1,)
+
+    # next_samples = A@state.samples + B@(controller[0]@state.samples + controller[1])
 
     # for sample_idx in range(state.num_samples):
     #     sample = state.samples[:, sample_idx].reshape(-1,1)
@@ -301,8 +312,8 @@ class MCTS:
             new_state = transition(node.state, new_action, node.dynamics)
             new_child = Node(new_state, node.dynamics, node, new_action)
             new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
-            #compute_wasserstein_dist(new_state.samples, self.target_state.means[0], self.target_state.covs[0])
-            
+            # compute_wasserstein_dist(new_state.samples[:2, :], self.target_state.means[0], self.target_state.covs[0])
+
             node.children.append(new_child)
 
         choices_weights = [
@@ -325,7 +336,7 @@ class MCTS:
         # res = np.mean(np.linalg.norm(next_node.state.samples, axis=0))
         
         res = compute_heur_dist(state_next.samples, self.target_state, self.qs, self.bs)
-        # res = compute_wasserstein_dist(state_next.samples, self.target_state.means[0], self.target_state.covs[0])
+        # res = compute_wasserstein_dist(state_next.samples[:2, :], self.target_state.means[0], self.target_state.covs[0])
 
         return res
     
@@ -338,40 +349,43 @@ class MCTS:
 # Example usage
     
 def dyn_func(x, u):
-    # dt = 0.1
+    dt = 0.1
     # A = np.array([[1, dt], [0, 1]])
     # B = np.array([[0, dt]]).reshape(-1,1)
 
-    A = np.eye(2)
-    B = 0.1*np.array([[1., 0.], [0., 1.]])
+    # A = np.eye(2)
+    # B = 0.1*np.array([[1., 0.], [0., 1.]])
 
-    x_next = A@x + B@u
+    x_next = np.array([x[0] + dt*u[0]*np.cos(x[2]),
+                       x[1] + dt*u[0]*np.sin(x[2]),
+                       x[2] + u[1]*dt]).reshape(-1,)
 
     return x_next
 
-dyns = dynamics(2, 2, dyn_func)
+dyns = dynamics(3, 2, dyn_func)
 
-num_steps = 150
+num_steps = 60
 
 # intiial state
 state = State()
-init_mean = np.array([0., 1.])
-init_cov = 10*np.eye(2)
+init_mean = np.array([-2, -2., 0.])
+init_cov = np.eye(3)
+init_cov[2,2]=0.
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 root = Node(state, dyns)
 
 
 
 # Target density
-target_means = [np.array([10., 12.])]
-target_covs = [np.eye(2)]
+target_means = [np.array([3., 2.])]
+target_covs = [np.array([[2, 1.5], [1.5, 2]])]
 target_weights = [1.]
 target_state = target_density(target_weights, target_means, target_covs)
 
 # Distance heuristic half-spaces    
 angles = np.linspace(0, 360, num=pars.NUM_HALFSPACES, endpoint=False)
 L = np.linalg.cholesky(target_covs[0])
-zs = 0.15*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
+zs = 2.*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
 points = target_means[0].reshape(-1,1) + L@zs
 plt.plot(points[0, :], points[1, :], '*')
 plt.show()
@@ -395,12 +409,11 @@ for t in tqdm(range(num_steps)):
 
     plt.plot(root.state.samples[0, :], root.state.samples[1, :], '*')
     plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
-    plot_level_curves_normal(init_mean, init_cov, "winter")
+    plot_level_curves_normal(init_mean[0:2], init_cov[0:2, 0:2], "winter")
     plt.xlabel("x")
     plt.ylabel("y")
-    plt.xlim(-10, 30)
-    plt.ylim(-10., 30.)
-    plt.axis('equal')
+    plt.xlim(-5, 10)
+    plt.ylim(-5., 10.)
     
     file_dir = os.path.dirname(os.path.realpath(__file__))
     log_dir = os.path.join(file_dir, "results")
@@ -412,11 +425,11 @@ for t in tqdm(range(num_steps)):
     root = next_root
 
     dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
-    wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
+    # wass_dists.append(compute_wasserstein_dist(root.state.samples[:2, :], target_state.means[0], target_state.covs[0]))
 
 
 plt.plot(range(num_steps), dists, label="Distance Heuristic (eq. 6)")
-plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
+# plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")
 plt.legend()

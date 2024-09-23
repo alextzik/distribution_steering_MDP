@@ -351,27 +351,27 @@ def dyn_func(x, u):
 
 dyns = dynamics(2, 2, dyn_func)
 
-num_steps = 150
+num_steps = 100
 
 # intiial state
 state = State()
-init_mean = np.array([0., 1.])
-init_cov = 10*np.eye(2)
+init_mean = np.array([5., -5.])
+init_cov = np.eye(2)
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 root = Node(state, dyns)
 
 
 
 # Target density
-target_means = [np.array([10., 12.])]
-target_covs = [np.eye(2)]
+target_means = [np.array([-5., -6.])]
+target_covs = [5*np.array([[2, 1.5], [1.5, 2.]])]
 target_weights = [1.]
 target_state = target_density(target_weights, target_means, target_covs)
 
 # Distance heuristic half-spaces    
 angles = np.linspace(0, 360, num=pars.NUM_HALFSPACES, endpoint=False)
 L = np.linalg.cholesky(target_covs[0])
-zs = 0.15*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
+zs = 2.*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
 points = target_means[0].reshape(-1,1) + L@zs
 plt.plot(points[0, :], points[1, :], '*')
 plt.show()
@@ -398,8 +398,8 @@ for t in tqdm(range(num_steps)):
     plot_level_curves_normal(init_mean, init_cov, "winter")
     plt.xlabel("x")
     plt.ylabel("y")
-    plt.xlim(-10, 30)
-    plt.ylim(-10., 30.)
+    plt.xlim(-15, 15)
+    plt.ylim(-15., 15.)
     plt.axis('equal')
     
     file_dir = os.path.dirname(os.path.realpath(__file__))

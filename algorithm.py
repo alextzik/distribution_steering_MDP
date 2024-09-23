@@ -135,12 +135,12 @@ def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:d
 
     # next_samples = np.zeros(shape=(state.dim_state, state.num_samples))
 
-    # dt = 0.1
-    # A = np.array([[1, dt], [0, 1]])
-    # B = np.array([[0, dt]]).reshape(-1,1)
+    dt = 0.1
+    A = np.array([[1, dt], [0, 1]])
+    B = np.array([[0, dt]]).reshape(-1,1)
 
-    A = np.eye(2)
-    B = 0.1*np.array([[1., 0.], [0., 1.]])
+    # A = np.eye(2)
+    # B = 0.1*np.array([[1., 0.], [0., 1.]])
 
     next_samples = A@state.samples + B@(controller[0]@state.samples + controller[1])
 
@@ -197,7 +197,7 @@ class Node:
         sample_V = sample_orthogonal_mat(dim=dim_state)
         sample_U = sample_orthogonal_mat(dim=dim_input)
         sample_S = np.zeros(shape=(dim_input, dim_state))
-        sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.5, size=(min_dim,))
+        sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.1, size=(min_dim,))
 
         # theta = np.random.uniform(low=0., high=2*np.pi)
         # rot_matrix = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
@@ -305,6 +305,14 @@ class MCTS:
             
             node.children.append(new_child)
 
+        if len(node.children) == 101:
+            new_action = [np.array([0, -1]).reshape(1,-1), np.zeros(shape=(1,1))]
+            new_state = transition(node.state, new_action, node.dynamics)
+            new_child = Node(new_state, node.dynamics, node, new_action)
+            new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
+
+            node.children.append(new_child)
+
         choices_weights = [
         child.value  - self.c_param * math.sqrt(math.log(node.visits) / child.visits)
         for child in node.children
@@ -338,48 +346,52 @@ class MCTS:
 # Example usage
     
 def dyn_func(x, u):
-    # dt = 0.1
-    # A = np.array([[1, dt], [0, 1]])
-    # B = np.array([[0, dt]]).reshape(-1,1)
+    dt = 0.1
+    A = np.array([[1, dt], [0, 1]])
+    B = np.array([[0, dt]]).reshape(-1,1)
 
-    A = np.eye(2)
-    B = 0.1*np.array([[1., 0.], [0., 1.]])
+    # A = np.eye(2)
+    # B = 0.1*np.array([[1., 0.], [0., 1.]])
 
     x_next = A@x + B@u
 
     return x_next
 
-dyns = dynamics(2, 2, dyn_func)
+dyns = dynamics(2, 1, dyn_func)
 
-num_steps = 150
+num_steps = 200
 
 # intiial state
 state = State()
-init_mean = np.array([0., 1.])
+init_mean = np.array([0., 0.])
 init_cov = 10*np.eye(2)
+init_cov[1,1] = 0
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 root = Node(state, dyns)
 
 
 
 # Target density
-target_means = [np.array([10., 12.])]
-target_covs = [np.eye(2)]
+target_means = [np.array([10.,])]
+target_covs = [np.eye(1)]
 target_weights = [1.]
 target_state = target_density(target_weights, target_means, target_covs)
 
 # Distance heuristic half-spaces    
-angles = np.linspace(0, 360, num=pars.NUM_HALFSPACES, endpoint=False)
-L = np.linalg.cholesky(target_covs[0])
-zs = 0.15*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
-points = target_means[0].reshape(-1,1) + L@zs
-plt.plot(points[0, :], points[1, :], '*')
-plt.show()
-qs = np.zeros(shape=(2, pars.NUM_HALFSPACES))
-bs = np.zeros(shape=(pars.NUM_HALFSPACES, 1))
-for _ in range(pars.NUM_HALFSPACES):
-    qs[:, _] = target_means[0] - points[:, _] #+ sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
-    bs[_, 0] = (-qs[:, _].reshape(1, -1)@points[:, _]).item()
+# angles = np.linspace(0, 360, num=pars.NUM_HALFSPACES, endpoint=False)
+# L = np.linalg.cholesky(target_covs[0])
+# zs = 0.15*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
+# points = target_means[0].reshape(-1,1) + L@zs
+# plt.plot(points[0, :], points[1, :], '*')
+# plt.show()
+# qs = np.zeros(shape=(2, pars.NUM_HALFSPACES))
+# bs = np.zeros(shape=(pars.NUM_HALFSPACES, 1))
+# for _ in range(pars.NUM_HALFSPACES):
+#     qs[:, _] = target_means[0] - points[:, _] #+ sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
+#     bs[_, 0] = (-qs[:, _].reshape(1, -1)@points[:, _]).item()
+
+qs = np.ones(shape=(1, pars.NUM_HALFSPACES))
+bs = np.linspace(-20, 0, num=pars.NUM_HALFSPACES).reshape(-1,1)
 
 target_state.compute_prob_contents(qs, bs)
 print(target_state.prob_contents)
@@ -393,14 +405,32 @@ wass_dists = []
 # Main Loop
 for t in tqdm(range(num_steps)):
 
-    plt.plot(root.state.samples[0, :], root.state.samples[1, :], '*')
-    plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
-    plot_level_curves_normal(init_mean, init_cov, "winter")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.xlim(-10, 30)
-    plt.ylim(-10., 30.)
-    plt.axis('equal')
+    plt.hist(root.state.samples[0, :], bins=40, density=True)
+    # Parameters for the Gaussian distribution
+    mu = init_mean[0]     # Mean
+    sigma = np.sqrt(init_cov[0,0])   # Standard deviation
+
+    # Create an array of x values
+    x = np.linspace(mu - 4*sigma, mu + 4*sigma, 1000)
+
+    # Calculate the Gaussian density function
+    pdf = norm.pdf(x, mu, sigma)
+    plt.plot(x, pdf, color="blue")
+
+    mu = target_means[0][0]     # Mean
+    sigma = np.sqrt(target_covs[0][0,0])   # Standard deviation
+
+    # Create an array of x values
+    x = np.linspace(mu - 4*sigma, mu + 4*sigma, 1000)
+
+    # Calculate the Gaussian density function
+    pdf = norm.pdf(x, mu, sigma)
+    plt.plot(x, pdf, color="green")
+
+    # plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
+    # plot_level_curves_normal(init_mean, init_cov, "winter")
+    plt.ylabel("Distribution Density")
+    plt.xlabel("Position Element of State")
     
     file_dir = os.path.dirname(os.path.realpath(__file__))
     log_dir = os.path.join(file_dir, "results")
@@ -412,11 +442,11 @@ for t in tqdm(range(num_steps)):
     root = next_root
 
     dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
-    wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
+    # wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
 
 
 plt.plot(range(num_steps), dists, label="Distance Heuristic (eq. 6)")
-plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
+# plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")
 plt.legend()

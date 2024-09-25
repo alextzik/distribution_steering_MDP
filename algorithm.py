@@ -355,7 +355,7 @@ num_steps = 100
 
 # intiial state
 state = State()
-init_mean = np.array([5., -5.])
+init_mean = np.array([0., 0.])
 init_cov = np.eye(2)
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 root = Node(state, dyns)
@@ -363,9 +363,9 @@ root = Node(state, dyns)
 
 
 # Target density
-target_means = [np.array([-5., -6.])]
-target_covs = [5*np.array([[2, 1.5], [1.5, 2.]])]
-target_weights = [1.]
+target_means = [np.array([-5., -6.]), np.array([5., 9.])]
+target_covs = [5*np.array([[2, 1.5], [1.5, 2.]]), 5*np.array([[2, 1.5], [1.5, 2.]])]
+target_weights = [.5, 0.5]
 target_state = target_density(target_weights, target_means, target_covs)
 
 # Distance heuristic half-spaces    
@@ -381,6 +381,14 @@ for _ in range(pars.NUM_HALFSPACES):
     qs[:, _] = target_means[0] - points[:, _] #+ sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
     bs[_, 0] = (-qs[:, _].reshape(1, -1)@points[:, _]).item()
 
+L_2 = np.linalg.cholesky(target_covs[1])
+points_2 = target_means[1].reshape(-1,1) + L_2@zs
+qs_2 = np.zeros(shape=(2, pars.NUM_HALFSPACES))
+bs_2 = np.zeros(shape=(pars.NUM_HALFSPACES, 1))
+for _ in range(pars.NUM_HALFSPACES):
+    qs_2[:, _] = target_means[1] - points_2[:, _] #+ sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
+    bs_2[_, 0] = (-qs_2[:, _].reshape(1, -1)@points_2[:, _]).item()
+
 target_state.compute_prob_contents(qs, bs)
 print(target_state.prob_contents)
 
@@ -395,6 +403,7 @@ for t in tqdm(range(num_steps)):
 
     plt.plot(root.state.samples[0, :], root.state.samples[1, :], '*')
     plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
+    plot_level_curves_normal(target_state.means[1], target_state.covs[1], "summer")
     plot_level_curves_normal(init_mean, init_cov, "winter")
     plt.xlabel("x")
     plt.ylabel("y")
@@ -412,11 +421,11 @@ for t in tqdm(range(num_steps)):
     root = next_root
 
     dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
-    wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
+    # wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
 
 
 plt.plot(range(num_steps), dists, label="Distance Heuristic (eq. 6)")
-plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
+# plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")
 plt.legend()

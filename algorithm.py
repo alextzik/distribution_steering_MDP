@@ -13,17 +13,13 @@
 # Dependencies
 import math
 import numpy as np
-from sklearn.covariance import EmpiricalCovariance
-from scipy.stats import ortho_group
-from tqdm import tqdm
 import matplotlib.pyplot as plt
-import os
 from scipy.stats import norm
 
 from typing import Callable
 
 import parameters as pars
-from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat
+from utils import compute_heur_dist, sample_orthogonal_mat
 
 plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams['font.size'] = 15
@@ -42,6 +38,7 @@ class dynamics:
         self.dim_state = dim_state
         self.dim_input = dim_input
         self.dyn_func  = dyn_func
+
 
 class target_density:
     def __init__(self, weights:list, means:list, covs:list) -> None:
@@ -133,20 +130,11 @@ def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:d
             - the next state
     """
 
-    # next_samples = np.zeros(shape=(state.dim_state, state.num_samples))
+    next_samples = np.zeros(shape=(state.dim_state, state.num_samples))
 
-    # dt = 0.1
-    # A = np.array([[1, dt], [0, 1]])
-    # B = np.array([[0, dt]]).reshape(-1,1)
-
-    A = np.eye(2)
-    B = 0.1*np.array([[1., 0.], [0., 1.]])
-
-    next_samples = A@state.samples + B@(controller[0]@state.samples + controller[1])
-
-    # for sample_idx in range(state.num_samples):
-    #     sample = state.samples[:, sample_idx].reshape(-1,1)
-    #     next_samples[:, sample_idx] = dynamics.dyn_func(sample, controller[0]@sample + controller[1]).reshape(-1,)
+    for sample_idx in range(state.num_samples):
+        sample = state.samples[:, sample_idx].reshape(-1,1)
+        next_samples[:, sample_idx] = dynamics.dyn_func(sample, controller[0]@sample + controller[1]).reshape(-1,)
 
     next_state = State()
     next_state.set(next_samples)
@@ -328,96 +316,3 @@ class MCTS:
         # res = compute_wasserstein_dist(state_next.samples, self.target_state.means[0], self.target_state.covs[0])
 
         return res
-    
-##########################################################################################
-##########################################################################################
-#                                      METHOD DEPLOYMENT                                 #
-#                                                                                        #       
-##########################################################################################
-
-# Example usage
-    
-def dyn_func(x, u):
-    # dt = 0.1
-    # A = np.array([[1, dt], [0, 1]])
-    # B = np.array([[0, dt]]).reshape(-1,1)
-
-    A = np.eye(2)
-    B = 0.1*np.array([[1., 0.], [0., 1.]])
-
-    x_next = A@x + B@u
-
-    return x_next
-
-dyns = dynamics(2, 2, dyn_func)
-
-num_steps = 100
-
-# intiial state
-state = State()
-init_mean = np.array([5., -5.])
-init_cov = np.eye(2)
-state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
-root = Node(state, dyns)
-
-
-
-# Target density
-target_means = [np.array([-5., -6.])]
-target_covs = [5*np.array([[2, 1.5], [1.5, 2.]])]
-target_weights = [1.]
-target_state = target_density(target_weights, target_means, target_covs)
-
-# Distance heuristic half-spaces    
-angles = np.linspace(0, 360, num=pars.NUM_HALFSPACES, endpoint=False)
-L = np.linalg.cholesky(target_covs[0])
-zs = 2.*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
-points = target_means[0].reshape(-1,1) + L@zs
-plt.plot(points[0, :], points[1, :], '*')
-plt.show()
-qs = np.zeros(shape=(2, pars.NUM_HALFSPACES))
-bs = np.zeros(shape=(pars.NUM_HALFSPACES, 1))
-for _ in range(pars.NUM_HALFSPACES):
-    qs[:, _] = target_means[0] - points[:, _] #+ sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
-    bs[_, 0] = (-qs[:, _].reshape(1, -1)@points[:, _]).item()
-
-target_state.compute_prob_contents(qs, bs)
-print(target_state.prob_contents)
-
-#Setup MCTS
-mcts = MCTS(target_state, qs, bs, iterations=1000)
-dists = []
-wass_dists = []
-
-
-# Main Loop
-for t in tqdm(range(num_steps)):
-
-    plt.plot(root.state.samples[0, :], root.state.samples[1, :], '*')
-    plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
-    plot_level_curves_normal(init_mean, init_cov, "winter")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.xlim(-15, 15)
-    plt.ylim(-15., 15.)
-    plt.axis('equal')
-    
-    file_dir = os.path.dirname(os.path.realpath(__file__))
-    log_dir = os.path.join(file_dir, "results")
-    os.chdir(log_dir)
-    plt.savefig(f"step_{t}.png")
-    plt.close()
-
-    next_action, next_root = mcts.plan(root)
-    root = next_root
-
-    dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
-    wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
-
-
-plt.plot(range(num_steps), dists, label="Distance Heuristic (eq. 6)")
-plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
-plt.ylabel("Instantaneous Cost")
-plt.xlabel("Timestep")
-plt.legend()
-plt.show()

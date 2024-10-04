@@ -1,3 +1,9 @@
+"""
+    Developed by Alexandros Tzikas
+                alextzik@stanford.edu
+
+"""
+
 ##########################################################################################
 #                                      USEFUL FUNCTIONS                                  #
 #                                                                                        #       
@@ -59,7 +65,10 @@ def compute_wasserstein_dist(samples, mean, covariance):
 
     return dist
 
-
+"""
+    Algorithm 1 of the paper. Computes the half-space distance between the samples and the target_state distribution (given as a GMM), using the half-spaces
+    in qs and bs
+"""
 def compute_heur_dist(samples:np.ndarray, target_state, qs:np.ndarray, bs:np.ndarray) -> float:
 
     vals = np.sum(qs.T@samples + bs >=0, axis = 1)/samples.shape[1]
@@ -89,6 +98,9 @@ def plot_level_curves_normal(mean, covar, color):
     plt.contour(X, Y, Z, levels=20, cmap=color) 
 
 
+"""
+    Samples an orthogonal matrix of dimension dim
+"""
 def sample_orthogonal_mat(dim:int):
     M = np.random.randn(dim, dim)
     Q, R = np.linalg.qr(M)

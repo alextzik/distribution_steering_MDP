@@ -26,7 +26,7 @@ import parameters as pars
 from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat
 
 plt.rcParams['font.family'] = 'Times New Roman'
-plt.rcParams['font.size'] = 15
+plt.rcParams['font.size'] = 20
 
 ##########################################################################################
 class dynamics:
@@ -418,7 +418,7 @@ for t in tqdm(range(num_steps)):
     file_dir = os.path.dirname(os.path.realpath(__file__))
     log_dir = os.path.join(file_dir, "results")
     os.chdir(log_dir)
-    plt.savefig(f"step_{t}.png")
+    plt.savefig(f"step_{t}.pdf", bbox_inches='tight')
     plt.close()
 
     next_action, next_root = mcts.plan(root)

@@ -26,7 +26,7 @@ import parameters as pars
 from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat
 
 plt.rcParams['font.family'] = 'Times New Roman'
-plt.rcParams['font.size'] = 15
+plt.rcParams['font.size'] = 20
 
 ##########################################################################################
 class dynamics:
@@ -305,8 +305,9 @@ class MCTS:
             
             node.children.append(new_child)
 
-        if len(node.children) == 101:
-            new_action = [np.array([0, -1]).reshape(1,-1), np.zeros(shape=(1,1))]
+        if len(node.children) == 101: 
+            # add controller that stops movement
+            new_action = [np.array([0, -10]).reshape(1,-1), np.zeros(shape=(1,1))]
             new_state = transition(node.state, new_action, node.dynamics)
             new_child = Node(new_state, node.dynamics, node, new_action)
             new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
@@ -435,7 +436,7 @@ for t in tqdm(range(num_steps)):
     file_dir = os.path.dirname(os.path.realpath(__file__))
     log_dir = os.path.join(file_dir, "results")
     os.chdir(log_dir)
-    plt.savefig(f"step_{t}.png")
+    plt.savefig(f"step_{t}.pdf", bbox_inches='tight')
     plt.close()
 
     next_action, next_root = mcts.plan(root)

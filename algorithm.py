@@ -371,7 +371,7 @@ state = State()
 init_mean = np.array([-2, -2., 0.])
 init_cov = np.eye(3)
 init_cov[2,2]=0.
-state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
+state.sample(mean = init_mean, covariance=init_cov, num_samples=3000)
 root = Node(state, dyns)
 
 

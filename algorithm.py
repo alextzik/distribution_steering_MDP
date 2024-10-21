@@ -23,7 +23,7 @@ from scipy.stats import norm
 from typing import Callable
 
 import parameters as pars
-from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat
+from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat, gmm_distance
 
 plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams['font.size'] = 20
@@ -119,7 +119,7 @@ class State:
         self.samples = np.random.multivariate_normal(mean=mean, cov=covariance, size=self.num_samples).T
         self.dim_state = self.samples.shape[0]
 
-def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:dynamics) -> State:
+def transition(state:State, controller:tuple, dynamics:dynamics) -> State:
     """
     Performs the transition from the current state to a new state using the provided
     controller
@@ -142,7 +142,14 @@ def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:d
     # A = np.eye(2)
     # B = 0.1*np.array([[1., 0.], [0., 1.]])
 
-    next_samples = A@state.samples + B@(controller[0]@state.samples + controller[1])
+    batch_1 = A@state.samples + B@(controller[0][0]@state.samples + controller[0][1])
+    batch_2 = A@state.samples + B@(controller[1][0]@state.samples + controller[1][1])
+
+    upto = int(state.samples.shape[1]*0.7)
+
+    next_samples = state.samples.copy()
+    next_samples[:, :upto] = batch_1[:, :upto]
+    next_samples[:, upto:] = batch_2[:, upto:]
 
     # for sample_idx in range(state.num_samples):
     #     sample = state.samples[:, sample_idx].reshape(-1,1)
@@ -190,25 +197,30 @@ class Node:
         Samples an action that will lead to a new child node
         """
 
-        dim_state = self.action[0].shape[1]
-        dim_input = self.action[0].shape[0]
+        dim_state = 2
+        dim_input = 1
         min_dim = np.minimum(dim_input, dim_state)
 
-        sample_V = sample_orthogonal_mat(dim=dim_state)
-        sample_U = sample_orthogonal_mat(dim=dim_input)
-        sample_S = np.zeros(shape=(dim_input, dim_state))
-        sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.1, size=(min_dim,))
+        new_action = []
 
-        # theta = np.random.uniform(low=0., high=2*np.pi)
-        # rot_matrix = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
-        # scale_coeff = np.random.uniform(low=0., high=1.)
+        for _ in range(2):
 
-        prop_K = sample_U @ sample_S @ sample_V.T 
-        # prop_K = scale_coeff*rot_matrix
-        prop_b = 3*np.random.standard_normal(size=(dim_input, 1))
+            sample_V = sample_orthogonal_mat(dim=dim_state)
+            sample_U = sample_orthogonal_mat(dim=dim_input)
+            sample_S = np.zeros(shape=(dim_input, dim_state))
+            sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.1, size=(min_dim,))
 
-        # prop_K = np.zeros(shape=(2,2))
-        new_action = [prop_K, prop_b]
+            # theta = np.random.uniform(low=0., high=2*np.pi)
+            # rot_matrix = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+            # scale_coeff = np.random.uniform(low=0., high=1.)
+
+            prop_K = sample_U @ sample_S @ sample_V.T 
+            # prop_K = scale_coeff*rot_matrix
+            prop_b = 3*np.random.standard_normal(size=(dim_input, 1))
+
+            # prop_K = np.zeros(shape=(2,2))
+            new_action.append([prop_K, prop_b])
+
         return new_action
 
 class MCTS:
@@ -277,6 +289,7 @@ class MCTS:
         # print(len(node.children))
         if depth == 0:
             return compute_heur_dist(node.state.samples, self.target_state, self.qs, self.bs)
+            #return gmm_distance(node.state.samples, self.target_state) 
 
         next_node = self._action_prog_widen(node)
 
@@ -301,6 +314,7 @@ class MCTS:
             new_state = transition(node.state, new_action, node.dynamics)
             new_child = Node(new_state, node.dynamics, node, new_action)
             new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
+            #gmm_distance(new_child.state.samples, self.target_state) 
             #compute_wasserstein_dist(new_state.samples, self.target_state.means[0], self.target_state.covs[0])
             
             node.children.append(new_child)
@@ -308,9 +322,11 @@ class MCTS:
         if len(node.children) == 101: 
             # add controller that stops movement
             new_action = [np.array([0, -10]).reshape(1,-1), np.zeros(shape=(1,1))]
+            new_action = [new_action, new_action]
             new_state = transition(node.state, new_action, node.dynamics)
             new_child = Node(new_state, node.dynamics, node, new_action)
             new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
+            #gmm_distance(new_child.state.samples, self.target_state) 
 
             node.children.append(new_child)
 
@@ -334,6 +350,7 @@ class MCTS:
         # res = np.mean(np.linalg.norm(next_node.state.samples, axis=0))
         
         res = compute_heur_dist(state_next.samples, self.target_state, self.qs, self.bs)
+        #gmm_distance(state_next.samples, self.target_state) 
         # res = compute_wasserstein_dist(state_next.samples, self.target_state.means[0], self.target_state.covs[0])
 
         return res
@@ -360,7 +377,7 @@ def dyn_func(x, u):
 
 dyns = dynamics(2, 1, dyn_func)
 
-num_steps = 200
+num_steps = 100
 
 # intiial state
 state = State()
@@ -373,9 +390,9 @@ root = Node(state, dyns)
 
 
 # Target density
-target_means = [np.array([10.,])]
-target_covs = [np.eye(1)]
-target_weights = [1.]
+target_means = [np.array([5.,]), np.array([20.,])]
+target_covs = [10*np.eye(1), 10*np.eye(1)]
+target_weights = [0.3, 0.7]
 target_state = target_density(target_weights, target_means, target_covs)
 
 # Distance heuristic half-spaces    
@@ -391,8 +408,10 @@ target_state = target_density(target_weights, target_means, target_covs)
 #     qs[:, _] = target_means[0] - points[:, _] #+ sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
 #     bs[_, 0] = (-qs[:, _].reshape(1, -1)@points[:, _]).item()
 
-qs = np.ones(shape=(1, pars.NUM_HALFSPACES))
-bs = np.linspace(-20, 0, num=pars.NUM_HALFSPACES).reshape(-1,1)
+qs = np.ones(shape=(1, int(pars.NUM_HALFSPACES/2)))
+qs = np.hstack([qs, -np.ones(shape=(1, int(pars.NUM_HALFSPACES/2)))])
+bs = np.linspace(-25, 0, num=int(pars.NUM_HALFSPACES/2)).reshape(-1,1)
+bs = np.vstack([bs, np.linspace(0, 25, num=int(pars.NUM_HALFSPACES/2)).reshape(-1,1)])
 
 target_state.compute_prob_contents(qs, bs)
 print(target_state.prob_contents)
@@ -418,14 +437,15 @@ for t in tqdm(range(num_steps)):
     pdf = norm.pdf(x, mu, sigma)
     plt.plot(x, pdf, color="blue")
 
-    mu = target_means[0][0]     # Mean
+    mu_small = target_means[0][0]     # Mean
+    mu_big = target_means[1][0]
     sigma = np.sqrt(target_covs[0][0,0])   # Standard deviation
 
     # Create an array of x values
-    x = np.linspace(mu - 4*sigma, mu + 4*sigma, 1000)
+    x = np.linspace(mu_small - 4*sigma, mu_big + 4*sigma, 1000)
 
     # Calculate the Gaussian density function
-    pdf = norm.pdf(x, mu, sigma)
+    pdf = 0.3*norm.pdf(x, mu_small, sigma) + 0.7*norm.pdf(x, mu_big, sigma)
     plt.plot(x, pdf, color="green")
 
     # plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")

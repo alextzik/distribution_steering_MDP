@@ -6,6 +6,7 @@
 import numpy as np
 import scipy as sp
 from scipy.stats import multivariate_normal
+from sklearn.mixture import GaussianMixture
 import matplotlib.pyplot as plt
 import parameters as pars
 
@@ -67,6 +68,23 @@ def compute_heur_dist(samples:np.ndarray, target_state, qs:np.ndarray, bs:np.nda
     res = np.sum(np.abs(vals - np.array(target_state.prob_contents)))/pars.NUM_HALFSPACES
 
     return res
+
+def gmm_distance(samples:np.ndarray, target_state) -> float:
+    fit_gmm = GaussianMixture(n_components=2, covariance_type='full')
+    fit_gmm.fit(samples.T[:, 0].reshape(-1,1))
+    fit_means = fit_gmm.means_
+    fit_covs = fit_gmm.covariances_
+    fit_weights = fit_gmm.weights_
+
+    dist = 0.
+
+    for _ in range(2):
+        dist += np.linalg.norm(target_state.means[_].reshape(-1,) - fit_means[_, :])
+        dist += np.linalg.norm(target_state.covs[_].reshape(-1,) - fit_covs[_, :, :].reshape(-1))
+
+    dist += np.linalg.norm(fit_weights - np.array(target_state.weights))
+
+    return dist
 
 
 """

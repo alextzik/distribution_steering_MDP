@@ -46,7 +46,7 @@ def baseline_algorithm(samples: np.ndarray, state_dim:int, control_dim:int, targ
 
         with torch.no_grad():
             K_control.data += - step_size*K_control.grad.data/torch.max(torch.abs(K_control.grad.data))
-            b_control.data += - step_size*b_control.grad.data//torch.max(torch.abs(b_control.grad.data))
+            b_control.data += - step_size*b_control.grad.data/torch.max(torch.abs(b_control.grad.data))
 
         K_control.grad.zero_()
         b_control.grad.zero_()

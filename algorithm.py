@@ -24,6 +24,7 @@ from typing import Callable
 
 import parameters as pars
 from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat, gmm_distance
+from baseline import baseline_algorithm
 
 plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams['font.size'] = 20
@@ -385,6 +386,7 @@ init_mean = np.array([0., 0.])
 init_cov = 10*np.eye(2)
 init_cov[1,1] = 0
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
+baseline_state_samples = state.samples
 root = Node(state, dyns)
 
 
@@ -420,6 +422,7 @@ print(target_state.prob_contents)
 mcts = MCTS(target_state, qs, bs, iterations=1000)
 dists = []
 wass_dists = []
+dists_baseline = []
 
 
 # Main Loop
@@ -459,14 +462,53 @@ for t in tqdm(range(num_steps)):
     plt.savefig(f"step_{t}.pdf", bbox_inches='tight')
     plt.close()
 
+    ###########################################################
+    plt.hist(baseline_state_samples[0, :], bins=40, density=True)
+    # Parameters for the Gaussian distribution
+    mu = init_mean[0]     # Mean
+    sigma = np.sqrt(init_cov[0,0])   # Standard deviation
+
+    # Create an array of x values
+    x = np.linspace(mu - 4*sigma, mu + 4*sigma, 1000)
+
+    # Calculate the Gaussian density function
+    pdf = norm.pdf(x, mu, sigma)
+    plt.plot(x, pdf, color="blue")
+
+    mu_small = target_means[0][0]     # Mean
+    mu_big = target_means[1][0]
+    sigma = np.sqrt(target_covs[0][0,0])   # Standard deviation
+
+    # Create an array of x values
+    x = np.linspace(mu_small - 4*sigma, mu_big + 4*sigma, 1000)
+
+    # Calculate the Gaussian density function
+    pdf = 0.3*norm.pdf(x, mu_small, sigma) + 0.7*norm.pdf(x, mu_big, sigma)
+    plt.plot(x, pdf, color="green")
+
+    # plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
+    # plot_level_curves_normal(init_mean, init_cov, "winter")
+    plt.ylabel("Distribution Density")
+    plt.xlabel("Position Element of State")
+    
+    file_dir = os.path.dirname(os.path.realpath(__file__))
+    log_dir = os.path.join(file_dir, "results")
+    os.chdir(log_dir)
+    plt.savefig(f"baseline_step_{t}.pdf", bbox_inches='tight')
+    plt.close()
+
+    dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
+    dists_baseline.append(compute_heur_dist(baseline_state_samples, mcts.target_state, qs, bs))
+    # wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
+
     next_action, next_root = mcts.plan(root)
     root = next_root
 
-    dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
-    # wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
+    baseline_state_samples = baseline_algorithm(baseline_state_samples.copy(), 2, 1, target_state, qs, bs)
 
 
-plt.plot(range(num_steps), dists, label="Distance Heuristic (eq. 6)")
+plt.plot(range(num_steps), dists, label="Distance Metric (Alg. 1) for Proposed")
+plt.plot(range(num_steps), dists_baseline, color='#2ca02c', label="Distance Metric (Alg. 1) for Baseline")
 # plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")

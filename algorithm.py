@@ -24,6 +24,7 @@ from typing import Callable
 
 import parameters as pars
 from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat
+from baseline import baseline_algorithm
 
 plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams['font.size'] = 20
@@ -358,6 +359,7 @@ state = State()
 init_mean = np.array([5., -5.])
 init_cov = np.eye(2)
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
+baseline_state_samples = state.samples
 root = Node(state, dyns)
 
 
@@ -373,8 +375,8 @@ angles = np.linspace(0, 360, num=pars.NUM_HALFSPACES, endpoint=False)
 L = np.linalg.cholesky(target_covs[0])
 zs = 2.*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
 points = target_means[0].reshape(-1,1) + L@zs
-plt.plot(points[0, :], points[1, :], '*')
-plt.show()
+# plt.plot(points[0, :], points[1, :], '*')
+# plt.show()
 qs = np.zeros(shape=(2, pars.NUM_HALFSPACES))
 bs = np.zeros(shape=(pars.NUM_HALFSPACES, 1))
 for _ in range(pars.NUM_HALFSPACES):
@@ -388,7 +390,7 @@ print(target_state.prob_contents)
 mcts = MCTS(target_state, qs, bs, iterations=1000)
 dists = []
 wass_dists = []
-
+dists_baseline = []
 
 # Main Loop
 for t in tqdm(range(num_steps)):
@@ -408,15 +410,34 @@ for t in tqdm(range(num_steps)):
     plt.savefig(f"step_{t}.pdf", bbox_inches='tight')
     plt.close()
 
+    plt.plot(baseline_state_samples[0, :], baseline_state_samples[1, :], '*')
+    plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
+    plot_level_curves_normal(init_mean, init_cov, "winter")
+    plt.xlabel("x")
+    plt.ylabel("y")
+    plt.xlim(-15, 15)
+    plt.ylim(-15., 15.)
+    plt.axis('equal')
+    
+    file_dir = os.path.dirname(os.path.realpath(__file__))
+    log_dir = os.path.join(file_dir, "results")
+    os.chdir(log_dir)
+    plt.savefig(f"baseline_step_{t}.pdf", bbox_inches='tight')
+    plt.close()
+
+    dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
+    dists_baseline.append(compute_heur_dist(baseline_state_samples, mcts.target_state, qs, bs))
+    wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
+
     next_action, next_root = mcts.plan(root)
     root = next_root
 
-    dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
-    wass_dists.append(compute_wasserstein_dist(root.state.samples, target_state.means[0], target_state.covs[0]))
+    baseline_state_samples = baseline_algorithm(baseline_state_samples.copy(), 2, 2, target_state, qs, bs)
 
 
-plt.plot(range(num_steps), dists, label="Distance Heuristic (eq. 6)")
-plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
+plt.plot(range(num_steps), dists, label="Distance Metric (Alg. 1) for Proposed")
+plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled) for Proposed")
+plt.plot(range(num_steps), dists_baseline, label="Distance Metric (Alg. 1) for Baseline")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")
 plt.legend()

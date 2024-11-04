@@ -18,19 +18,17 @@ The organization of the code is quite straight-forward.
 * ```algorithm.py```
     * Contains the implementation of our proposed online planning algorithm, along with supporting classes. Our algorithm is implemented as the ```MCTS``` class, which contains Algorithms 2-4 from the paper.
 
+    * Runs the algorithms and collects the results. In this script, we specify the dynamics, the initial and target state distribution, the half-spaces to be used in the distance metric, and run our algorithm
+    for a given number of steps.
+
 * ```baseline.py```
     * Contains the implementation of the baseline algorithm
-
 
 * ```utils.py```
     * Contains the implementation of our novel distance metric ```compute_heur_dist``` (Algorithm 1 in paper)
 
 * ```parameters.py```
     * Sets the necessary parameters
-
-* ```run.py```
-    * Runs the algorithm and collects the results. In this script, we specify the dynamics, the initial and target state distribution, the half-spaces to be used in the distance metric, and run our algorithm
-    for a given number of steps.
 
 ## Further Notes
 

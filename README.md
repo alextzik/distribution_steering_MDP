@@ -18,6 +18,10 @@ The organization of the code is quite straight-forward.
 * ```algorithm.py```
     * Contains the implementation of our proposed online planning algorithm, along with supporting classes. Our algorithm is implemented as the ```MCTS``` class, which contains Algorithms 2-4 from the paper.
 
+* ```baseline.py```
+    * Contains the implementation of the baseline algorithm
+
+
 * ```utils.py```
     * Contains the implementation of our novel distance metric ```compute_heur_dist``` (Algorithm 1 in paper)
 

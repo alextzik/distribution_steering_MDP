@@ -36,9 +36,10 @@ def baseline_algorithm(samples: np.ndarray, dim_state:int, dim_input:int, target
     dists = []
     for step in range(1000):
 
-        next_samples = A_dyn@samples_torch + B_dyn@(K_control@samples_torch+b_control)
+        next_samples_1 = A_dyn@samples_torch + B_dyn@(K_control@samples_torch+b_control)
+        next_samples_2 = A_dyn@next_samples_1 + B_dyn@(K_control@next_samples_1+b_control)
         # Assume qs_torch, next_samples, and bs_torch are defined and require gradients
-        linear_combination = qs_torch.T @ next_samples[0, :].reshape(1, -1) + bs_torch
+        linear_combination = qs_torch.T @ next_samples_2[0, :].reshape(1, -1) + bs_torch
         # Use softplus to create a differentiable approximation of the step function
         output = torch.sigmoid(100*linear_combination)
 
@@ -55,9 +56,9 @@ def baseline_algorithm(samples: np.ndarray, dim_state:int, dim_input:int, target
             denom_b = torch.max(torch.abs(b_control.grad.data))
 
             if denom_K == 0.0:
-                denom_K = 1
+                denom_K = 1.
             if denom_b == 0.0:
-                denom_b = 1
+                denom_b = 1.
 
             K_control.data += - step_size*K_control.grad.data/denom_K
             b_control.data += - step_size*b_control.grad.data/denom_b

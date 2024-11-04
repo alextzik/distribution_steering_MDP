@@ -489,6 +489,7 @@ for t in tqdm(range(num_steps)):
 
 
 plt.plot(range(num_steps), dists, label="Distance Metric (Alg. 1) for Proposed")
+plt.plot(range(num_steps), dists_baseline, color='#2ca02c', label="Distance Metric (Alg. 1) for Baseline")
 # plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")

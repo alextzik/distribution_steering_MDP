@@ -23,7 +23,7 @@ from scipy.stats import norm
 from typing import Callable
 
 import parameters as pars
-from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat
+from utils import plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat, compute_heur_dist_unscented
 from baseline import baseline_algorithm
 
 plt.rcParams['font.family'] = 'Times New Roman'
@@ -83,6 +83,7 @@ class target_density:
 
         self.prob_contents = prob_contents
 
+##########################################################################################
 class State:
     def __init__(self) -> None:
         """This class contains the set of samples for a given node in the tree search.
@@ -165,6 +166,88 @@ def transition(state:State, controller:tuple[np.ndarray, np.ndarray], dynamics:d
 
     return next_state
 
+class State_Baseline:
+    def __init__(self) -> None:
+        """This class contains the set of samples for a given node in the tree search.
+        
+            pars:
+                - dim_state [int]: dimensionality of state
+                - num_samples [int]: number of available samples
+                - sigma_points [(dim_state, 2*dim_state)]: sigma_points
+                - mean (dim_state): mean of Sigma_points
+                - Sigma (dim_state, dim_state): covariance of Sigma points
+                - samples: samples
+        """
+        self.dim_state = None
+        self.sigma_points = None
+        self.mean = None
+        self.Sigma = None
+        self.samples = None
+
+    def set(self, sigma_points:np.ndarray, samples: np.ndarray) -> None:
+        """
+            Sets the state's particle set using a provided particle set
+            args:
+                - samples [(dim, num_samples) np.array]: contains the samples as columns
+        """
+        self.dim_state = sigma_points.shape[0]
+        self.sigma_points = sigma_points
+        self.mean = np.mean(sigma_points, axis=1)
+        self.Sigma = np.cov(sigma_points)
+        self.samples = samples
+
+def transition_Baseline(state:State_Baseline, controller:tuple[np.ndarray, np.ndarray], dynamics:dynamics) -> State_Baseline:
+    """
+    Performs the transition from the current state to a new state using the provided
+    controller
+
+    args:
+            -  state [State_Baseline]: the current state
+            -  controller [tuple]: the matrix and bias for the controller
+            -  dynamics [dynamics]: the dynamics instance
+    
+    return:
+            - the next state
+    """
+
+    # next_samples = np.zeros(shape=(state.dim_state, state.num_samples))
+
+    # dt = 0.1
+    # A = np.array([[1, dt], [0, 1]])
+    # B = np.array([[0, dt]]).reshape(-1,1)
+
+    dt = 0.1
+
+    next_samples = np.zeros(shape=state.samples.shape)
+    next_sigma_points = np.zeros(shape=state.sigma_points.shape)
+
+    us = controller[0]@state.samples+ controller[1]
+    us_sigmas = controller[0]@state.sigma_points+ controller[1]
+
+    for _ in range(state.samples.shape[1]):
+        x = state.samples[:, _]
+        u = us[:, _]
+        next_samples[:, _] = np.array([x[0] + dt*u[0]*np.cos(x[2]),
+                       x[1] + dt*u[0]*np.sin(x[2]),
+                       x[2] + u[1]*dt]).reshape(-1,)
+        
+    for _ in range(state.sigma_points.shape[1]):
+        x = state.sigma_points[:, _]
+        u = us_sigmas[:, _]
+        next_sigma_points[:, _] = np.array([x[0] + dt*u[0]*np.cos(x[2]),
+                       x[1] + dt*u[0]*np.sin(x[2]),
+                       x[2] + u[1]*dt]).reshape(-1,)
+
+    # for sample_idx in range(state.num_samples):
+    #     sample = state.samples[:, sample_idx].reshape(-1,1)
+    #     next_samples[:, sample_idx] = dynamics.dyn_func(sample, controller[0]@sample + controller[1]).reshape(-1,)
+
+    next_state = State_Baseline()
+    next_state.set(sigma_points=next_sigma_points, samples=next_samples)
+
+    return next_state
+
+##########################################################################################
 class Node:
 
     def __init__(self, state:State, dynamics:dynamics, parent=None, action:list=None):
@@ -224,7 +307,12 @@ class Node:
         return new_action
 
 class MCTS:
-    def __init__(self, target_state:target_density, qs:np.ndarray, bs:np.ndarray, iterations:int=1000):
+    def __init__(self, 
+                 target_state:target_density, 
+                 qs:np.ndarray, 
+                 bs:np.ndarray, 
+                 iterations:int=1000,
+                 which:str="proposed"):
         """
         The MCTS algorithm is determined by the following parameters:
             - self.iterations: num of simulations to carry out
@@ -236,6 +324,8 @@ class MCTS:
                 - self.ao
             - qs: the normal vectors for the halfspaces in the distance heuristic
             - bs: the offsets for the halfspaces in the distance heuristic
+            - which: which MCTS type "baseline" or "proposed".
+                     Baseline corresponds to the method using the unscented transform.
         """
         self.iterations = iterations
 
@@ -255,6 +345,9 @@ class MCTS:
         self.qs = qs
         self.bs = bs
 
+        # Type
+        self.which = which
+        
     def plan(self, root:Node) -> tuple[tuple[np.ndarray, np.ndarray], float]:
         """
         Deploys MCTS starting from an initial node at the root
@@ -288,7 +381,10 @@ class MCTS:
         """
         # print(len(node.children))
         if depth == 0:
-            return compute_heur_dist(node.state.samples, self.target_state, self.qs, self.bs)
+            if self.which == "proposed":
+                return compute_heur_dist(node.state.samples, self.target_state, self.qs, self.bs)
+            else: 
+                return compute_heur_dist_unscented(node.state.sigma_points, self.target_state, self.qs, self.bs)
 
         next_node = self._action_prog_widen(node)
 
@@ -310,9 +406,14 @@ class MCTS:
         # if len(node.children) <= self.ka*node.visits**(self.ao):
         if len(node.children) <= 100:
             new_action = node.sample_action()
-            new_state = transition(node.state, new_action, node.dynamics)
-            new_child = Node(new_state, node.dynamics, node, new_action)
-            new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
+            if self.which == "proposed":
+                new_state = transition(node.state, new_action, node.dynamics)
+                new_child = Node(new_state, node.dynamics, node, new_action)
+                new_child.value = compute_heur_dist(new_child.state.samples, self.target_state, self.qs, self.bs)
+            else:
+                new_state = transition_Baseline(node.state, new_action, node.dynamics)
+                new_child = Node(new_state, node.dynamics, node, new_action)
+                new_child.value = compute_heur_dist_unscented(new_child.state.sigma_points, self.target_state, self.qs, self.bs)
             # compute_wasserstein_dist(new_state.samples[:2, :], self.target_state.means[0], self.target_state.covs[0])
 
             node.children.append(new_child)
@@ -335,8 +436,11 @@ class MCTS:
         state_next = next_node.state
 
         # res = np.mean(np.linalg.norm(next_node.state.samples, axis=0))
-        
-        res = compute_heur_dist(state_next.samples, self.target_state, self.qs, self.bs)
+        if self.which == "proposed":
+            res = compute_heur_dist(state_next.samples, self.target_state, self.qs, self.bs)
+        else: 
+            res = compute_heur_dist_unscented(state_next.sigma_points, self.target_state, self.qs, self.bs)
+        # res = compute_heur_dist(state_next.samples, self.target_state, self.qs, self.bs)
         # res = compute_wasserstein_dist(state_next.samples[:2, :], self.target_state.means[0], self.target_state.covs[0])
 
         return res
@@ -365,7 +469,7 @@ def dyn_func(x, u):
 
 dyns = dynamics(3, 2, dyn_func)
 
-num_steps = 60
+num_steps = 30
 
 # intiial state
 state = State()
@@ -376,7 +480,16 @@ state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 baseline_state_samples = state.samples
 root = Node(state, dyns)
 
-
+unscented_baseline_states = np.zeros((3, 2*3+1))
+unscented_baseline_states[:, 0] = init_mean
+for i in range(1, 3+1):
+    L = np.linalg.cholesky(np.eye(3))
+    unscented_baseline_states[:, (i-1)*2+1] = (init_mean.reshape(-1,1) + np.sqrt(2+pars.LAMDA)*L[i-1, :].reshape(-1,1)).reshape(-1,)
+    unscented_baseline_states[:, (i-1)*2+2] = (init_mean.reshape(-1,1) - np.sqrt(2+pars.LAMDA)*L[i-1, :].reshape(-1,1)).reshape(-1,)
+unscented_baseline_states[-1, :] = 0.
+state_unscented = State_Baseline()
+state_unscented.set(unscented_baseline_states, state.samples)
+root_unscented = Node(state_unscented, dyns)
 
 # Target density
 target_means = [np.array([3., 2.])]
@@ -402,9 +515,11 @@ print(target_state.prob_contents)
 
 #Setup MCTS
 mcts = MCTS(target_state, qs, bs, iterations=1000)
+mcsts_unscented = MCTS(target_state, qs, bs, iterations=1000, which="baseline")
 dists = []
 wass_dists = []
 dists_baseline = []
+dists_unscented = []
 
 
 # Main Loop
@@ -439,17 +554,22 @@ for t in tqdm(range(num_steps)):
     plt.close()
 
     dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
-    dists_baseline.append(compute_heur_dist(baseline_state_samples, mcts.target_state, qs, bs))    
+    dists_baseline.append(compute_heur_dist(baseline_state_samples, mcts.target_state, qs, bs)) 
+    dists_unscented.append(compute_heur_dist_unscented(root_unscented.state.samples, mcsts_unscented.target_state, qs, bs))  
     # wass_dists.append(compute_wasserstein_dist(root.state.samples[:2, :], target_state.means[0], target_state.covs[0]))
 
     next_action, next_root = mcts.plan(root)
     root = next_root
+
+    next_action_unscented, next_root_unscented = mcsts_unscented.plan(root_unscented)
+    root_unscented = next_root_unscented
 
     baseline_state_samples = baseline_algorithm(baseline_state_samples.copy(), 3, 2, target_state, qs, bs)
 
 # np.save('proposed_dists.npy', dists)
 plt.plot(range(num_steps), dists, label="Distance Metric (Alg. 1) for Proposed")
 plt.plot(range(num_steps), dists_baseline, color='#2ca02c', label="Distance Metric (Alg. 1) for Baseline")
+plt.plot(range(num_steps), dists_unscented, label="Distance Metric (Alg. 1) for Unscented Baseline")
 # # plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")

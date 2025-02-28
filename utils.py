@@ -8,6 +8,8 @@ import scipy as sp
 from scipy.stats import multivariate_normal
 import matplotlib.pyplot as plt
 import parameters as pars
+from scipy.stats import norm
+
 
 """
     Computes the KL divergence between two sample sets
@@ -68,6 +70,30 @@ def compute_heur_dist(samples:np.ndarray, target_state, qs:np.ndarray, bs:np.nda
 
     return res
 
+
+def compute_heur_dist_unscented(samples:np.ndarray, target_state, qs:np.ndarray, bs:np.ndarray) -> float:
+
+    prob_contents = []
+
+    mean = np.mean(samples, axis=1)[:-1]
+    Sigma = np.cov(samples)[:-1, :-1]
+    for i in range(qs.shape[1]):
+        q = qs[:, i].reshape(-1,1)
+        b = bs[i, 0]
+
+        r_mean = q.T@mean.reshape(-1,1) + b
+        r_cov = q.T@Sigma@q
+
+        prob_content = 1-norm.cdf(x=0., loc=r_mean, scale=np.sqrt(r_cov))
+
+        prob_contents.append(prob_content.item())
+        
+    res = np.sum(np.abs(np.array(prob_contents) 
+                        - np.array(target_state.prob_contents)
+                        )
+                )/pars.NUM_HALFSPACES
+
+    return res
 
 """
     Plot level curves of Normal Distribution

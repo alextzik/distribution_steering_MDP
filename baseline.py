@@ -39,7 +39,7 @@ def baseline_algorithm(samples: np.ndarray, dim_state:int, dim_input:int, target
     target_tensor = torch.tensor(target_state.prob_contents, dtype=torch.float32, requires_grad=False)
 
     ######################
-    step_size = 1e-2
+    step_size = 1e-1
 
     dists = []
     dt = 0.1

@@ -58,15 +58,15 @@ def baseline_algorithm(samples: np.ndarray,
 
     for step in range(300):
 
-        us = K_control@samples_torch + b_control
-        next_samples = torch.zeros(size=samples.shape)
-
-        for _ in range(samples.shape[1]):
-            x = samples_torch[:, _]
-            u = us[:, _]
-            next_samples[0, _] = x[0] + dt*u[0]*np.cos(x[2])
-            next_samples[1, _] = x[1] + dt*u[0]*np.sin(x[2])
-            next_samples[2, _] = x[2] + u[1]*dt
+        us = K_control @ samples_torch + b_control  # shape (2, N)
+        # Vectorized unicycle dynamics (state: x,y,theta ; input: v, omega)
+        v = us[0, :]
+        omega = us[1, :]
+        theta = samples_torch[2, :]
+        next_samples = torch.empty_like(samples_torch)
+        next_samples[0, :] = samples_torch[0, :] + dt * v * torch.cos(theta)
+        next_samples[1, :] = samples_torch[1, :] + dt * v * torch.sin(theta)
+        next_samples[2, :] = theta + dt * omega
             
         # Assume qs_torch, next_samples, and bs_torch are defined and require gradients
         linear_combination = qs_torch.T @ next_samples[:2, :] + bs_torch
@@ -98,14 +98,13 @@ def baseline_algorithm(samples: np.ndarray,
         K_control.grad.zero_()
         b_control.grad.zero_()
 
-    us = K_control@samples_torch + b_control
-    next_samples = torch.zeros(size=samples.shape)
-
-    for _ in range(samples.shape[1]):
-        x = samples_torch[:, _]
-        u = us[:, _]
-        next_samples[0, _] = x[0] + dt*u[0]*np.cos(x[2])
-        next_samples[1, _] = x[1] + dt*u[0]*np.sin(x[2])
-        next_samples[2, _] = x[2] + u[1]*dt
+    us = K_control @ samples_torch + b_control
+    v = us[0, :]
+    omega = us[1, :]
+    theta = samples_torch[2, :]
+    next_samples = torch.empty_like(samples_torch)
+    next_samples[0, :] = samples_torch[0, :] + dt * v * torch.cos(theta)
+    next_samples[1, :] = samples_torch[1, :] + dt * v * torch.sin(theta)
+    next_samples[2, :] = theta + dt * omega
 
     return next_samples.detach().numpy(), K_control.detach().numpy(), b_control.detach().numpy()

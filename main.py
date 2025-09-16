@@ -465,7 +465,7 @@ def dyn_func(x, u):
 
 dyns = dynamics(3, 2, dyn_func)
 
-num_steps = 200
+num_steps = 350
 
 # intiial state
 state = State()
@@ -482,19 +482,21 @@ target_weights = [1.]
 target_state = target_density(target_weights, target_means, target_covs)
 
 # Distance heuristic half-spaces    
-angles = np.linspace(0, 360, num=pars.NUM_HALFSPACES, endpoint=False)
-L = np.linalg.cholesky(target_covs[0])
-zs = 2.*np.array([[np.cos(np.radians(angle)), np.sin(np.radians(angle))] for angle in angles]).T
-points = target_means[0].reshape(-1,1) + L@zs
-plt.plot(points[0, :], points[1, :], '*')
-plt.show()
-qs = np.zeros(shape=(2, pars.NUM_HALFSPACES))
-for _ in range(pars.NUM_HALFSPACES):
-    qs[:, _] = target_means[0] - points[:, _] #+ sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
-    
-bs = np.linspace(-15., 15., 100)
+dirs = np.random.normal(size=(pars.NUM_HALFSPACES, 2))
+dirs /= np.linalg.norm(dirs, axis=1, keepdims=True) + 1e-12
+qs = dirs
+
+quantiles = []
+for q in qs:
+    proj_samples = q@target_state.means[0].reshape(-1,1) + np.sqrt(q@target_state.covs[0]@q)*np.random.standard_normal(size=(1000,))
+    quantiles.append(np.quantile(proj_samples, 0.9))
+    quantiles.append(np.quantile(proj_samples, 0.1))
+
+
+bs = np.linspace(np.min(np.array(quantiles)), np.max(np.array(quantiles)), 100)
 bs = np.tile(bs, pars.NUM_HALFSPACES).reshape(-1,1)
-qs = np.repeat(qs, 100, axis=1)
+qs = np.repeat(qs.T, 100, axis=1)
+
 
 target_state.compute_prob_contents(qs, bs)
 print(target_state.prob_contents)
@@ -502,8 +504,6 @@ print(target_state.prob_contents)
 #Setup MCTS
 mcts = MCTS(target_state, qs, bs, iterations=1000)
 dists_gradient = []
-K_control = None
-b_control = None
 
 # Main Loop
 for t in tqdm(range(num_steps)):
@@ -524,7 +524,7 @@ for t in tqdm(range(num_steps)):
 
     dists_gradient.append(compute_heur_dist(baseline_state_samples, mcts.target_state, qs, bs)) 
 
-    baseline_state_samples, K_control, b_control = baseline_algorithm(baseline_state_samples.copy(), 3, 2, target_state, qs, bs, K_control, b_control)
+    baseline_state_samples, _, __ = baseline_algorithm(baseline_state_samples.copy(), 3, 2, target_state, qs, bs, None, None)
 
 
 np.save("dists_gradient_baseline.npy", dists_gradient)

@@ -65,8 +65,8 @@ def compute_wasserstein_dist(samples, mean, covariance):
 def compute_heur_dist(samples:np.ndarray, target_state, qs:np.ndarray, bs:np.ndarray) -> float:
 
     vals = np.sum(qs.T@samples[0:2, :].reshape(2, -1) + bs >=0, axis = 1)/samples.shape[1]
-        
-    res = np.sum(np.abs(vals - np.array(target_state.prob_contents)))/pars.NUM_HALFSPACES
+    
+    res = np.sum(np.abs(vals - np.array(target_state.prob_contents)))/vals.shape[0]
 
     return res
 

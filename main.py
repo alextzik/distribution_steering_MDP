@@ -465,7 +465,7 @@ def dyn_func(x, u):
 
 dyns = dynamics(3, 2, dyn_func)
 
-num_steps = 60
+num_steps = 200
 
 # intiial state
 state = State()
@@ -474,8 +474,6 @@ init_cov = np.eye(3)
 init_cov[2,2]=0.
 state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
 baseline_state_samples = state.samples
-root = Node(state, dyns)
-root_conventional = Node_Open(state, dyns)
 
 # Target density
 target_means = [np.array([3., 2.])]
@@ -491,38 +489,24 @@ points = target_means[0].reshape(-1,1) + L@zs
 plt.plot(points[0, :], points[1, :], '*')
 plt.show()
 qs = np.zeros(shape=(2, pars.NUM_HALFSPACES))
-bs = np.zeros(shape=(pars.NUM_HALFSPACES, 1))
 for _ in range(pars.NUM_HALFSPACES):
     qs[:, _] = target_means[0] - points[:, _] #+ sqrt_min_eig*0.5*np.random.uniform(low=-1., high=1., size=(init_mean.shape))
-    bs[_, 0] = (-qs[:, _].reshape(1, -1)@points[:, _]).item()
+    
+bs = np.linspace(-15., 15., 100)
+bs = np.tile(bs, pars.NUM_HALFSPACES).reshape(-1,1)
+qs = np.repeat(qs, 100, axis=1)
 
 target_state.compute_prob_contents(qs, bs)
 print(target_state.prob_contents)
 
 #Setup MCTS
 mcts = MCTS(target_state, qs, bs, iterations=1000)
-mcsts_conventional = MCTS(target_state, qs, bs, iterations=1000, which="conventional")
-dists = []
-dists_gradient_baseline = []
-dists_conventional_baseline = []
-
+dists_gradient = []
+K_control = None
+b_control = None
 
 # Main Loop
 for t in tqdm(range(num_steps)):
-
-    plt.plot(root.state.samples[0, :], root.state.samples[1, :], '*')
-    plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
-    plot_level_curves_normal(init_mean[0:2], init_cov[0:2, 0:2], "winter")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.xlim(-5, 10)
-    plt.ylim(-5., 10.)
-    
-    file_dir = os.path.dirname(os.path.realpath(__file__))
-    log_dir = os.path.join(file_dir, "results")
-    os.chdir(log_dir)
-    plt.savefig(f"step_{t}.pdf", bbox_inches='tight')
-    plt.close()
 
     plt.plot(baseline_state_samples[0, :], baseline_state_samples[1, :], '*')
     plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
@@ -538,28 +522,15 @@ for t in tqdm(range(num_steps)):
     plt.savefig(f"baseline_step_{t}.pdf", bbox_inches='tight')
     plt.close()
 
-    dists.append(compute_heur_dist(root.state.samples, mcts.target_state, qs, bs))
-    dists_gradient_baseline.append(compute_heur_dist(baseline_state_samples, mcts.target_state, qs, bs)) 
-    dists_conventional_baseline.append(compute_heur_dist(root_conventional.state.samples, mcsts_conventional.target_state, qs, bs))  
-    # wass_dists.append(compute_wasserstein_dist(root.state.samples[:2, :], target_state.means[0], target_state.covs[0]))
+    dists_gradient.append(compute_heur_dist(baseline_state_samples, mcts.target_state, qs, bs)) 
 
-    next_action, next_root = mcts.plan(root)
-    root = next_root
-
-    next_action_conventional, next_root_conventional = mcsts_conventional.plan(root_conventional)
-    root_conventional = next_root_conventional
-
-    baseline_state_samples = baseline_algorithm(baseline_state_samples.copy(), 3, 2, target_state, qs, bs)
+    baseline_state_samples, K_control, b_control = baseline_algorithm(baseline_state_samples.copy(), 3, 2, target_state, qs, bs, K_control, b_control)
 
 
-np.save("dists.npy", dists)
-np.save("dists_conventional_baseline.npy", dists_conventional_baseline)
-np.save("dists_gradient_baseline.npy", dists_gradient_baseline)
+np.save("dists_gradient_baseline.npy", dists_gradient)
 
 # np.save('proposed_dists.npy', dists)
-plt.plot(range(num_steps), dists, label="Distance Metric (Alg. 1) for Proposed")
-plt.plot(range(num_steps), dists_gradient_baseline, color='#2ca02c', label="Distance Metric (Alg. 1) for Gradient")
-plt.plot(range(num_steps), dists_conventional_baseline, label="Distance Metric (Alg. 1) for Conventional")
+plt.plot(range(num_steps), dists_gradient, color='#2ca02c', label="Distance Metric (Alg. 1) for Gradient")
 # # plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
 plt.ylabel("Instantaneous Cost")
 plt.xlabel("Timestep")

@@ -19,16 +19,28 @@ def dyn_func(x, u):
 
     return x_next
 
-def baseline_algorithm(samples: np.ndarray, dim_state:int, dim_input:int, target_state, qs:np.ndarray, bs:np.ndarray):
+def baseline_algorithm(samples: np.ndarray, 
+                       dim_state:int, 
+                       dim_input:int, 
+                       target_state, 
+                       qs:np.ndarray, 
+                       bs:np.ndarray, 
+                       K_control:np.ndarray=None,
+                       b_control:np.ndarray=None) -> np.ndarray:
     min_dim = np.minimum(dim_input, dim_state)
 
-    sample_V = sample_orthogonal_mat(dim=dim_state)
-    sample_U = sample_orthogonal_mat(dim=dim_input)
-    sample_S = np.zeros(shape=(dim_input, dim_state))
-    sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.1, size=(min_dim,))
+    if K_control is None or b_control is None:
+        sample_V = sample_orthogonal_mat(dim=dim_state)
+        sample_U = sample_orthogonal_mat(dim=dim_input)
+        sample_S = np.zeros(shape=(dim_input, dim_state))
+        sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.1, size=(min_dim,))
 
-    K_control = torch.tensor(sample_U @ sample_S @ sample_V.T , dtype=torch.float32, requires_grad=True)
-    b_control = torch.randn((dim_input, 1), requires_grad=True)
+        K_control = torch.tensor(sample_U @ sample_S @ sample_V.T , dtype=torch.float32, requires_grad=True)
+        b_control = torch.randn((dim_input, 1), requires_grad=True)
+
+    else:
+        K_control = torch.tensor(K_control, dtype=torch.float32, requires_grad=True)
+        b_control = torch.tensor(b_control, dtype=torch.float32, requires_grad=True)
 
     #######################
     samples_torch = torch.tensor(samples, dtype=torch.float32, requires_grad=False)
@@ -39,12 +51,12 @@ def baseline_algorithm(samples: np.ndarray, dim_state:int, dim_input:int, target
     target_tensor = torch.tensor(target_state.prob_contents, dtype=torch.float32, requires_grad=False)
 
     ######################
-    step_size = 1e-1
+    step_size = 1e-2
 
     dists = []
     dt = 0.1
 
-    for step in range(200):
+    for step in range(300):
 
         us = K_control@samples_torch + b_control
         next_samples = torch.zeros(size=samples.shape)
@@ -78,8 +90,10 @@ def baseline_algorithm(samples: np.ndarray, dim_state:int, dim_input:int, target
             if denom_b == 0.0:
                 denom_b = 1.
 
-            K_control.data += - step_size*K_control.grad.data/denom_K
-            b_control.data += - step_size*b_control.grad.data/denom_b
+            denom = np.maximum(denom_K, denom_b)
+
+            K_control.data += - step_size*K_control.grad.data/denom
+            b_control.data += - step_size*b_control.grad.data/denom
 
         K_control.grad.zero_()
         b_control.grad.zero_()
@@ -94,4 +108,4 @@ def baseline_algorithm(samples: np.ndarray, dim_state:int, dim_input:int, target
         next_samples[1, _] = x[1] + dt*u[0]*np.sin(x[2])
         next_samples[2, _] = x[2] + u[1]*dt
 
-    return next_samples.detach().numpy()
+    return next_samples.detach().numpy(), K_control.detach().numpy(), b_control.detach().numpy()

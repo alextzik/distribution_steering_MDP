@@ -17,8 +17,8 @@ def setup():
         dt=0.1,
         max_velocity=2.0,
         max_angular_velocity=2.0,
-        noise_xy_std=0.01,
-        noise_theta_std=0.01
+        noise_xy_std=0.0,
+        noise_theta_std=0.0
     )
 
     # Create bicycle system
@@ -40,11 +40,11 @@ def setup():
     action_dim = system.get_action_dim()
     
     # Q matrix: penalize deviation from target state
-    Q = torch.eye(state_dim) * 10.0  # Higher weight on position errors
-    Q[-1, -1] = 1.0  # Lower weight on heading error
+    # Q = torch.eye(state_dim) * 10.0  # Higher weight on position errors
+    # Q[-1, -1] = 1.0  # Lower weight on heading error
     
     # R matrix: penalize large actions
-    R = torch.eye(action_dim) * 0.1
+    # R = torch.eye(action_dim) * 0.1
     
     # Target state: reach origin with zero heading
     target_state = torch.zeros(state_dim)

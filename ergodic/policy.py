@@ -87,6 +87,7 @@ class ShootingMPCPolicy(Policy):
             # Compute cost using the abstract method
             costs = self.batched_cost(trajectory, actions, constraint_violations)
             training_losses.append(costs.detach().min().item())
+            print(training_losses[-1])
             # Backward pass through costs of all trajectories
             if i < self.num_gradient_steps - 1:
                 costs.sum().backward()

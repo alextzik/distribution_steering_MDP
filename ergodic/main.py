@@ -31,7 +31,7 @@ def setup():
     # )
     
     # Policy parameters
-    horizon = 70000
+    horizon = 20000
     num_restarts = 1
     num_gradient_steps = 150
     

@@ -1,0 +1,9 @@
+system 
+problem:
+  horizon: 20
+  num_restarts: 100
+optim:
+  gradient_steps: 1000
+  optimizer: torch.AdamW
+  optimizer_kwargs:
+    learning_rate: 0.001

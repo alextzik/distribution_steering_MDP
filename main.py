@@ -518,6 +518,7 @@ for t in tqdm(range(num_steps)):
     
     file_dir = os.path.dirname(os.path.realpath(__file__))
     log_dir = os.path.join(file_dir, "results")
+    os.makedirs(log_dir, exist_ok=True)
     os.chdir(log_dir)
     plt.savefig(f"baseline_step_{t}.pdf", bbox_inches='tight')
     plt.close()

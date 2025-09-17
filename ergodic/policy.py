@@ -180,8 +180,8 @@ class ErgodicMPCPolicy(ShootingMPCPolicy):
         soft_constraint_quad_penalty: float=1000.,
         num_restarts: int=100,
         num_gradient_steps: int=1000,
-        optimizer_class: type = torch.optim.AdamW,
-        optimizer_kwargs: dict={}):
+        optimizer_class: type = torch.optim.SGD,  # simple gradient descent optimizer
+        optimizer_kwargs: dict={"lr": 1e-3}):
         """Initialize ergodic MPC policy.
         
         Args:
@@ -238,35 +238,28 @@ class ErgodicMPCPolicy(ShootingMPCPolicy):
             trajectory: (T+1, num_restarts, state_dim) - trajectory states
             
         Returns:
-            distances: (num_restarts) - distance for each trajectory
+            distances: (num_restarts) - distance for each trajectory (restart)
         """
-        # Extract x, y coordinates (first 2 dimensions) from trajectory
-        # trajectory is (T+1, num_restarts, state_dim), we want (2, T+1*num_restarts)
-        xy_states = trajectory[:, :, :2]  # (T+1, num_restarts, 2)
-        xy_reshaped = xy_states.reshape(-1, 2).T  # (2, (T+1)*num_restarts)
-        
-        # Compute linear combinations: qs.T @ xy_reshaped + bs
-        # qs is (num_halfspaces, 2), xy_reshaped is (2, num_samples)
-        # Result is (num_halfspaces, num_samples)
-        linear_combinations = torch.matmul(self.qs, xy_reshaped) + self.bs  # (num_halfspaces, num_samples)
-        
-        # Count how many samples are in each half-space (>= 0)
-        # Use sigmoid for differentiable approximation of step function
-        halfspace_membership = torch.sigmoid(100 * linear_combinations)  # (num_halfspaces, num_samples)
-        
-        # Compute empirical probabilities for each half-space
-        num_samples = xy_reshaped.shape[1]
-        empirical_probs = torch.sum(halfspace_membership, dim=1) / num_samples  # (num_halfspaces,)
-        
-        # Compute distance as average absolute difference
-        prob_diff = torch.abs(empirical_probs - self.target_prob_contents)  # (num_halfspaces,)
-        distance = torch.sum(prob_diff) / len(prob_diff)  # scalar
-        
-        # Since we have multiple restarts, we need to compute distance for each restart
-        # We'll compute the distance for the entire trajectory and return it for all restarts
-        # (This is a simplification - in practice you might want per-restart distances)
-        # import pdb; pdb.set_trace() #FIXME
-        return torch.full((self.num_restarts,), distance, dtype=torch.float32)
+        # Extract (T+1, R, 2)
+        xy_states = trajectory[:, :, :2]  # (T+1, R, 2)
+        # Rearrange to (R, T+1, 2)
+        xy_by_restart = xy_states.permute(1, 0, 2)
+        # qs: (H, 2), bs: (H,1)
+        H = self.qs.shape[0]
+        R = xy_by_restart.shape[0]
+        T1 = xy_by_restart.shape[1]
+        # Compute projections for all half-spaces, restarts, and time points: (H, R, T1)
+        # Using einsum: 'hd,rtd->hrt'
+        linear_combinations = torch.einsum('hd,rtd->hrt', self.qs, xy_by_restart) + self.bs.unsqueeze(1)  # (H,R,T1)
+        # Differentiable half-space membership
+        halfspace_membership = torch.sigmoid(100 * linear_combinations)  # (H,R,T1)
+        # Empirical probs per restart per half-space: average over time samples
+        empirical_probs = halfspace_membership.mean(dim=2)  # (H,R)
+        # Target probs shape (H,) -> (H,1)
+        target_probs = self.target_prob_contents.unsqueeze(1)  # (H,1)
+        prob_diff = torch.abs(empirical_probs - target_probs)  # (H,R)
+        distances = prob_diff.mean(dim=0)  # (R,)
+        return distances
     
     def batched_cost(self, trajectory: torch.Tensor, actions: torch.Tensor, constraint_violations: torch.Tensor) -> torch.Tensor:
         """Compute the ergodic cost function for multiple trajectory candidates.

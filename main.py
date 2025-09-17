@@ -465,14 +465,14 @@ def dyn_func(x, u):
 
 dyns = dynamics(3, 2, dyn_func)
 
-num_steps = 350
+num_steps = 100
 
 # intiial state
 state = State()
 init_mean = np.array([-2, -2., 0.])
 init_cov = np.eye(3)
 init_cov[2,2]=0.
-state.sample(mean = init_mean, covariance=init_cov, num_samples=1000)
+state.sample(mean = init_mean, covariance=init_cov, num_samples=3000)
 baseline_state_samples = state.samples
 
 # Target density
@@ -488,7 +488,7 @@ qs = dirs
 
 quantiles = []
 for q in qs:
-    proj_samples = q@target_state.means[0].reshape(-1,1) + np.sqrt(q@target_state.covs[0]@q)*np.random.standard_normal(size=(1000,))
+    proj_samples = q@target_state.means[0].reshape(-1,1) + np.sqrt(q.T@target_state.covs[0]@q)*np.random.standard_normal(size=(1000,))
     quantiles.append(np.quantile(proj_samples, 0.9))
     quantiles.append(np.quantile(proj_samples, 0.1))
 
@@ -518,14 +518,16 @@ for t in tqdm(range(num_steps)):
     
     file_dir = os.path.dirname(os.path.realpath(__file__))
     log_dir = os.path.join(file_dir, "results")
-    os.makedirs(log_dir, exist_ok=True)
     os.chdir(log_dir)
     plt.savefig(f"baseline_step_{t}.pdf", bbox_inches='tight')
     plt.close()
 
     dists_gradient.append(compute_heur_dist(baseline_state_samples, mcts.target_state, qs, bs)) 
 
-    baseline_state_samples, _, __ = baseline_algorithm(baseline_state_samples.copy(), 3, 2, target_state, qs, bs, None, None)
+    baseline_state_samples = baseline_algorithm(baseline_state_samples.copy(), 
+                                                 3, 2, 
+                                                 target_state, qs, bs, 
+                                                 n_dyn_steps=25)
 
 
 np.save("dists_gradient_baseline.npy", dists_gradient)

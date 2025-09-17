@@ -82,7 +82,7 @@ class UnicycleSystem(BatchedSystem):
         ω: angular velocity (rad/s)
     """
     
-    def __init__(self, dt: float = 0.1, max_velocity: float = 2.0, max_angular_velocity: float = 2.0, noise_xy_std: float = 0.01, noise_theta_std: float = 0.01):
+    def __init__(self, dt: float = 0.1, max_velocity: float = 2.0, max_angular_velocity: float = 2.0, noise_xy_std: float = 0.0, noise_theta_std: float = 0.0):
         """Initialize unicycle system.
         
         Args:

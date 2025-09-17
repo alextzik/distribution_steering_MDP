@@ -25,22 +25,16 @@ def baseline_algorithm(samples: np.ndarray,
                        target_state, 
                        qs:np.ndarray, 
                        bs:np.ndarray, 
-                       K_control:np.ndarray=None,
-                       b_control:np.ndarray=None) -> np.ndarray:
+                       n_dyn_steps:int = 1) -> np.ndarray:
     min_dim = np.minimum(dim_input, dim_state)
 
-    if K_control is None or b_control is None:
-        sample_V = sample_orthogonal_mat(dim=dim_state)
-        sample_U = sample_orthogonal_mat(dim=dim_input)
-        sample_S = np.zeros(shape=(dim_input, dim_state))
-        sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.1, size=(min_dim,))
+    sample_V = sample_orthogonal_mat(dim=dim_state)
+    sample_U = sample_orthogonal_mat(dim=dim_input)
+    sample_S = np.zeros(shape=(dim_input, dim_state))
+    sample_S[0:min_dim, 0:min_dim] = np.random.uniform(low=0., high=0.1, size=(min_dim,))
 
-        K_control = torch.tensor(sample_U @ sample_S @ sample_V.T , dtype=torch.float32, requires_grad=True)
-        b_control = torch.randn((dim_input, 1), requires_grad=True)
-
-    else:
-        K_control = torch.tensor(K_control, dtype=torch.float32, requires_grad=True)
-        b_control = torch.tensor(b_control, dtype=torch.float32, requires_grad=True)
+    K_control = torch.tensor(sample_U @ sample_S @ sample_V.T , dtype=torch.float32, requires_grad=True)
+    b_control = torch.randn((dim_input, 1), requires_grad=True)
 
     #######################
     samples_torch = torch.tensor(samples, dtype=torch.float32, requires_grad=False)
@@ -58,15 +52,18 @@ def baseline_algorithm(samples: np.ndarray,
 
     for step in range(300):
 
-        us = K_control @ samples_torch + b_control  # shape (2, N)
-        # Vectorized unicycle dynamics (state: x,y,theta ; input: v, omega)
-        v = us[0, :]
-        omega = us[1, :]
-        theta = samples_torch[2, :]
-        next_samples = torch.empty_like(samples_torch)
-        next_samples[0, :] = samples_torch[0, :] + dt * v * torch.cos(theta)
-        next_samples[1, :] = samples_torch[1, :] + dt * v * torch.sin(theta)
-        next_samples[2, :] = theta + dt * omega
+        # Unroll n_dyn_steps of dynamics starting from initial samples each optimization step
+        cur_samples = samples_torch.clone()
+        for _dyn in range(n_dyn_steps):
+            us = K_control @ cur_samples + b_control  # shape (2, N)
+            v = us[0, :]
+            omega = us[1, :]
+            theta = cur_samples[2, :]
+            x_next = cur_samples[0, :] + dt * v * torch.cos(theta)
+            y_next = cur_samples[1, :] + dt * v * torch.sin(theta)
+            th_next = theta + dt * omega
+            cur_samples = torch.stack([x_next, y_next, th_next], dim=0)
+        next_samples = cur_samples
             
         # Assume qs_torch, next_samples, and bs_torch are defined and require gradients
         linear_combination = qs_torch.T @ next_samples[:2, :] + bs_torch
@@ -98,13 +95,23 @@ def baseline_algorithm(samples: np.ndarray,
         K_control.grad.zero_()
         b_control.grad.zero_()
 
-    us = K_control @ samples_torch + b_control
-    v = us[0, :]
-    omega = us[1, :]
-    theta = samples_torch[2, :]
-    next_samples = torch.empty_like(samples_torch)
-    next_samples[0, :] = samples_torch[0, :] + dt * v * torch.cos(theta)
-    next_samples[1, :] = samples_torch[1, :] + dt * v * torch.sin(theta)
-    next_samples[2, :] = theta + dt * omega
 
-    return next_samples.detach().numpy(), K_control.detach().numpy(), b_control.detach().numpy()
+    for _dyn in range(10):
+        us = K_control @ samples_torch + b_control  # shape (2, N)
+        v = us[0, :]
+        omega = us[1, :]
+        theta = samples_torch[2, :]
+        x_next = samples_torch[0, :] + dt * v * torch.cos(theta)
+        y_next = samples_torch[1, :] + dt * v * torch.sin(theta)
+        th_next = theta + dt * omega
+        samples_torch = torch.stack([x_next, y_next, th_next], dim=0)
+    # us = K_control @ samples_torch + b_control
+    # v = us[0, :]
+    # omega = us[1, :]
+    # theta = samples_torch[2, :]
+    # next_samples = torch.empty_like(samples_torch)
+    # next_samples[0, :] = samples_torch[0, :] + dt * v * torch.cos(theta)
+    # next_samples[1, :] = samples_torch[1, :] + dt * v * torch.sin(theta)
+    # next_samples[2, :] = theta + dt * omega
+
+    return next_samples.detach().numpy()

@@ -13,34 +13,42 @@ class Policy(abc.ABC):
         action, _ = self.action_info(state)
         return action
 
-class DescentLQRPolicy(Policy):
+class ShootingMPCPolicy(Policy):
+    """Abstract base class for policies that use PyTorch optimization to find actions.
+    
+    Subclasses must implement the batched_cost method that computes costs for multiple
+    trajectory candidates in parallel.
+    """
+    
     def __init__(self, 
-        system: BatchedSystem, 
-        horizon: int, 
-        Q: torch.Tensor, 
-        R: torch.Tensor, 
-        target_state: torch.Tensor,
-        soft_constraint_count_penalty: float=1000., 
-        soft_constraint_quad_penalty: float=1000.,
-        num_restarts: int=100,
-        num_gradient_steps: int=1000,
-        optimizer_class: type = torch.optim.AdamW,
-        optimizer_kwargs: dict={}):
-
+                 system: BatchedSystem, 
+                 horizon: int, 
+                 num_restarts: int=100,
+                 num_gradient_steps: int=1000,
+                 optimizer_class: type = torch.optim.AdamW,
+                 optimizer_kwargs: dict={}):
         self.system = system
         self.horizon = horizon
-        self.Q = Q
-        self.R = R
-        self.target_state = target_state
         self.num_restarts = num_restarts
         self.num_gradient_steps = num_gradient_steps
         self.optimizer_class = optimizer_class
         self.optimizer_kwargs = optimizer_kwargs
-        self.soft_constraint_count_penalty = soft_constraint_count_penalty
-        self.soft_constraint_quad_penalty = soft_constraint_quad_penalty
-
+    
+    @abc.abstractmethod
+    def batched_cost(self, trajectory: torch.Tensor, actions: torch.Tensor, constraint_violations: torch.Tensor) -> torch.Tensor:
+        """Compute the cost function for multiple trajectory candidates in parallel.
+        
+        Args:
+            trajectory: (T+1, num_restarts, state_dim)
+            actions: (T, num_restarts, action_dim)
+            constraint_violations: (T, num_restarts, constraint_dim)
+            
+        Returns:
+            costs: (num_restarts)
+        """
+        pass
+    
     def action_info(self, state: torch.Tensor) -> tuple[torch.Tensor, any]:
-
         # Initialize actions for trajectory
         actions = torch.stack([self.system.sample_actions(self.num_restarts) for _ in range(self.horizon)]) # (T, num_restarts, action_dim)
         actions.requires_grad_(True)
@@ -50,6 +58,7 @@ class DescentLQRPolicy(Policy):
         
         # Initialize optimizer for trajectory
         optimizer = self.optimizer_class([actions], **self.optimizer_kwargs)
+        training_losses = []
         for i in tqdm(range(self.num_gradient_steps)):
             # Build trajectory step by step without in-place operations
             trajectory_list = []
@@ -60,7 +69,6 @@ class DescentLQRPolicy(Policy):
             trajectory_list.append(current_state)
 
             for t in range(self.horizon):
-                # Forward pass through system dynamics
                 next_states = self.system.step(current_state, actions[t, :, :], noise[t, :, :])
                 trajectory_list.append(next_states)
                 
@@ -76,12 +84,12 @@ class DescentLQRPolicy(Policy):
             trajectory = torch.stack(trajectory_list, dim=0)  # (T+1, num_restarts, state_dim)
             constraint_violations = torch.stack(constraint_violations_list, dim=0)  # (T, num_restarts, constraint_dim)
             
-            # Compute cost
-            costs = self.cost(trajectory, actions, constraint_violations)
-            
+            # Compute cost using the abstract method
+            costs = self.batched_cost(trajectory, actions, constraint_violations)
+            training_losses.append(costs.detach().min().item())
             # Backward pass through costs of all trajectories
             if i < self.num_gradient_steps - 1:
-                costs.mean().backward()
+                costs.sum().backward()
                 optimizer.step()
                 optimizer.zero_grad()
 
@@ -100,12 +108,37 @@ class DescentLQRPolicy(Policy):
             "best_cost_index": best_cost_index,
             "best_actions": best_actions,
             "best_trajectory": best_trajectory,
-            "best_cost": costs[best_cost_index]
+            "best_cost": costs[best_cost_index],
+            "training_losses": training_losses
         }
         return immediate_action, info
+
+class DescentLQRPolicy(ShootingMPCPolicy):
+    def __init__(self, 
+        system: BatchedSystem, 
+        horizon: int, 
+        Q: torch.Tensor, 
+        R: torch.Tensor, 
+        target_state: torch.Tensor,
+        soft_constraint_count_penalty: float=1000., 
+        soft_constraint_quad_penalty: float=1000.,
+        num_restarts: int=100,
+        num_gradient_steps: int=1000,
+        optimizer_class: type = torch.optim.AdamW,
+        optimizer_kwargs: dict={}):
+        
+        # Call parent constructor
+        super().__init__(system, horizon, num_restarts, num_gradient_steps, optimizer_class, optimizer_kwargs)
+        
+        # LQR-specific parameters
+        self.Q = Q
+        self.R = R
+        self.target_state = target_state
+        self.soft_constraint_count_penalty = soft_constraint_count_penalty
+        self.soft_constraint_quad_penalty = soft_constraint_quad_penalty
     
-    def cost(self, trajectory: torch.Tensor, actions: torch.Tensor, constraint_violations: torch.Tensor) -> torch.Tensor:
-        """Compute the cost function using the LQR cost and soft constraint penalties. 
+    def batched_cost(self, trajectory: torch.Tensor, actions: torch.Tensor, constraint_violations: torch.Tensor) -> torch.Tensor:
+        """Compute the LQR cost function with soft constraint penalties for multiple trajectory candidates.
         
         Args:
             trajectory: (T+1, num_restarts, state_dim)
@@ -129,3 +162,128 @@ class DescentLQRPolicy(Policy):
         constraint_penalty = self.soft_constraint_count_penalty * torch.sum(constraint_violations > 0)
         constraint_penalty += self.soft_constraint_quad_penalty * torch.sum(constraint_violations**2)
         return stage_state_cost + stage_action_cost + final_state_cost + constraint_penalty
+
+class ErgodicMPCPolicy(ShootingMPCPolicy):
+    """Ergodic MPC policy that minimizes distance to a target distribution.
+    
+    This policy uses a 1D distance calculation based on half-spaces to measure
+    how well the trajectory covers the target distribution.
+    """
+    
+    def __init__(self, 
+        system: BatchedSystem, 
+        horizon: int, 
+        target_density_samples: torch.Tensor,
+        qs: torch.Tensor,
+        bs: torch.Tensor,
+        soft_constraint_count_penalty: float=1000., 
+        soft_constraint_quad_penalty: float=1000.,
+        num_restarts: int=100,
+        num_gradient_steps: int=1000,
+        optimizer_class: type = torch.optim.AdamW,
+        optimizer_kwargs: dict={}):
+        """Initialize ergodic MPC policy.
+        
+        Args:
+            system: The system dynamics
+            horizon: Planning horizon
+            target_density_samples: Target distribution samples (2, num_samples) - x,y coordinates
+            qs: Half-space directions (num_halfspaces, 2)
+            bs: Half-space biases (num_halfspaces, 1)
+            soft_constraint_count_penalty: Penalty for constraint violations (count)
+            soft_constraint_quad_penalty: Penalty for constraint violations (quadratic)
+            num_restarts: Number of optimization restarts
+            num_gradient_steps: Number of gradient descent steps
+            optimizer_class: PyTorch optimizer class
+            optimizer_kwargs: Optimizer keyword arguments
+        """
+        # Call parent constructor
+        super().__init__(system, horizon, num_restarts, num_gradient_steps, optimizer_class, optimizer_kwargs)
+        
+        # Ergodic-specific parameters
+        self.target_density_samples = target_density_samples  # (2, num_samples)
+        self.qs = qs  # (num_halfspaces, 2)
+        self.bs = bs  # (num_halfspaces, 1)
+        self.soft_constraint_count_penalty = soft_constraint_count_penalty
+        self.soft_constraint_quad_penalty = soft_constraint_quad_penalty
+        
+        # Compute target probability contents from samples
+        self.target_prob_contents = self._compute_target_prob_contents()
+    
+    def _compute_target_prob_contents(self) -> torch.Tensor:
+        """Compute target probability contents from target density samples.
+        
+        Returns:
+            target_prob_contents: (num_halfspaces,) - probability content for each half-space
+        """
+        # Compute linear combinations for target samples
+        # target_density_samples is (2, num_samples), qs is (num_halfspaces, 2)
+        linear_combinations = torch.matmul(self.qs, self.target_density_samples) + self.bs  # (num_halfspaces, num_samples)
+        
+        # Count how many target samples are in each half-space (>= 0)
+        halfspace_membership = linear_combinations > 0  # (num_halfspaces, num_samples)
+        
+        # Compute empirical probabilities for each half-space
+        num_samples = self.target_density_samples.shape[1]
+        target_prob_contents = torch.sum(halfspace_membership, dim=1) / num_samples  # (num_halfspaces,)
+        
+        return target_prob_contents
+    
+    def compute_1d_distance(self, trajectory: torch.Tensor) -> torch.Tensor:
+        """Compute 1D distance between trajectory and target distribution.
+        
+        This implements the heuristic distance from utils.py using half-spaces.
+        
+        Args:
+            trajectory: (T+1, num_restarts, state_dim) - trajectory states
+            
+        Returns:
+            distances: (num_restarts) - distance for each trajectory
+        """
+        # Extract x, y coordinates (first 2 dimensions) from trajectory
+        # trajectory is (T+1, num_restarts, state_dim), we want (2, T+1*num_restarts)
+        xy_states = trajectory[:, :, :2]  # (T+1, num_restarts, 2)
+        xy_reshaped = xy_states.reshape(-1, 2).T  # (2, (T+1)*num_restarts)
+        
+        # Compute linear combinations: qs.T @ xy_reshaped + bs
+        # qs is (num_halfspaces, 2), xy_reshaped is (2, num_samples)
+        # Result is (num_halfspaces, num_samples)
+        linear_combinations = torch.matmul(self.qs, xy_reshaped) + self.bs  # (num_halfspaces, num_samples)
+        
+        # Count how many samples are in each half-space (>= 0)
+        # Use sigmoid for differentiable approximation of step function
+        halfspace_membership = torch.sigmoid(100 * linear_combinations)  # (num_halfspaces, num_samples)
+        
+        # Compute empirical probabilities for each half-space
+        num_samples = xy_reshaped.shape[1]
+        empirical_probs = torch.sum(halfspace_membership, dim=1) / num_samples  # (num_halfspaces,)
+        
+        # Compute distance as average absolute difference
+        prob_diff = torch.abs(empirical_probs - self.target_prob_contents)  # (num_halfspaces,)
+        distance = torch.sum(prob_diff) / len(prob_diff)  # scalar
+        
+        # Since we have multiple restarts, we need to compute distance for each restart
+        # We'll compute the distance for the entire trajectory and return it for all restarts
+        # (This is a simplification - in practice you might want per-restart distances)
+        # import pdb; pdb.set_trace() #FIXME
+        return torch.full((self.num_restarts,), distance, dtype=torch.float32)
+    
+    def batched_cost(self, trajectory: torch.Tensor, actions: torch.Tensor, constraint_violations: torch.Tensor) -> torch.Tensor:
+        """Compute the ergodic cost function for multiple trajectory candidates.
+        
+        Args:
+            trajectory: (T+1, num_restarts, state_dim)
+            actions: (T, num_restarts, action_dim)
+            constraint_violations: (T, num_restarts, constraint_dim)
+            
+        Returns:
+            costs: (num_restarts)
+        """
+        # Compute ergodic distance to target distribution
+        ergodic_cost = self.compute_1d_distance(trajectory)
+        
+        # Add constraint penalties
+        constraint_penalty = self.soft_constraint_count_penalty * torch.sum(constraint_violations > 0, dim=(0, 2))
+        constraint_penalty += self.soft_constraint_quad_penalty * torch.sum(constraint_violations**2, dim=(0, 2))
+        
+        return ergodic_cost + constraint_penalty

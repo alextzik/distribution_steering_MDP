@@ -31,7 +31,7 @@ def setup():
     # )
     
     # Policy parameters
-    horizon = 20000
+    horizon = 10000
     num_restarts = 1
     num_gradient_steps = 150
     
@@ -51,7 +51,7 @@ def setup():
     
     # Create 2-component GMM target distribution
     num_target_samples = 10000
-    num_halfspaces = 300
+    num_halfspaces = 400
     
     # Component 1: centered at (2, 2) with moderate spread
     mean1 = torch.tensor([3.0, 2.0])
@@ -85,15 +85,15 @@ def setup():
     
     # Sample half-space biases from -10 to 10
     # for each q in qs, we will have 100 different bs. They will be linspaced from the 10th to the 90th percentile of q^T target samples
-    bs = torch.zeros(num_halfspaces, 100)
+    bs = torch.zeros(num_halfspaces, 400)
     for i, q in enumerate(qs):
         projections = q @ target_density_samples  # (num_target_samples,)
-        p10 = torch.quantile(projections, 0.1)
-        p90 = torch.quantile(projections, 0.9)
-        bs[i] = -1*torch.linspace(p10, p90, 100)
+        p10 = torch.quantile(projections, 0.01)
+        p90 = torch.quantile(projections, 0.99)
+        bs[i] = -1*torch.linspace(p10, p90, 400)
     
     # now expand qs and bs to match shape (num_halfspaces*100, 2) and (num_halfspaces*100,). Each q should be matched with the corresponding row from bs
-    qs = qs.repeat_interleave(100, dim=0)  # (num_halfspaces*100, 2)
+    qs = qs.repeat_interleave(400, dim=0)  # (num_halfspaces*100, 2)
     bs = bs.flatten().unsqueeze(1)  # (num_halfspaces*100, 1)
 
     # Create policy
@@ -243,7 +243,7 @@ def visualize_results(system, policy, initial_state, action, info):
     all_y = np.concatenate([traj_xy[:,1], target_samples[1]])
     x_min, x_max = all_x.min()-0.5, all_x.max()+0.5
     y_min, y_max = all_y.min()-0.5, all_y.max()+0.5
-    bins = 100
+    bins = 30
     x_edges = np.linspace(x_min, x_max, bins+1)
     y_edges = np.linspace(y_min, y_max, bins+1)
 

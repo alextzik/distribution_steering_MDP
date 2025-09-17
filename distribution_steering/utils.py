@@ -112,7 +112,7 @@ def plot_level_curves_normal(mean, covar, color):
     Z = rv.pdf(pos)
 
     # Plot the contour plot
-    plt.contour(X, Y, Z, levels=20, cmap=color) 
+    plt.contour(X, Y, Z, levels=20, cmap=color, alpha=0.4) 
 
 
 def sample_orthogonal_mat(dim:int):

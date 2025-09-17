@@ -24,7 +24,7 @@ from typing import Callable
 
 import parameters as pars
 from utils import plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat, compute_heur_dist_unscented
-from baseline import baseline_algorithm
+from algorithm import gradient_algorithm
 
 plt.rcParams['font.family'] = 'Times New Roman'
 plt.rcParams['font.size'] = 20
@@ -508,23 +508,37 @@ dists_gradient = []
 # Main Loop
 for t in tqdm(range(num_steps)):
 
-    plt.plot(baseline_state_samples[0, :], baseline_state_samples[1, :], '*')
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
     plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
-    plot_level_curves_normal(init_mean[0:2], init_cov[0:2, 0:2], "winter")
-    plt.xlabel("x")
-    plt.ylabel("y")
-    plt.xlim(-5, 10)
-    plt.ylim(-5., 10.)
+    plot_level_curves_normal(init_mean[0:2], init_cov[0:2, 0:2], "summer")
+    # Heatmap of sample density instead of raw scatter
+    x_vals = baseline_state_samples[0, :]
+    y_vals = baseline_state_samples[1, :]
+    # Define bins (adjustable)
+    bins = 100
+    x_min, x_max = -5, 10
+    y_min, y_max = -5, 10
+    x_edges = np.linspace(x_min, x_max, bins+1)
+    y_edges = np.linspace(y_min, y_max, bins+1)
+    hist2d, xe, ye = np.histogram2d(x_vals, y_vals, bins=[x_edges, y_edges], density=True)
+    im = ax.imshow(hist2d.T, origin='lower', extent=[x_min, x_max, y_min, y_max], aspect='equal', cmap='cividis')
+    # make colorbar more transparent (adjust alpha of colorbar patches)
+    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Density')
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
     
     file_dir = os.path.dirname(os.path.realpath(__file__))
-    log_dir = os.path.join(file_dir, "results")
+    log_dir = os.path.join("/Users/alextzik/Documents/GitHub/distribution_steering_MDP/", "results") 
+
     os.chdir(log_dir)
-    plt.savefig(f"baseline_step_{t}.pdf", bbox_inches='tight')
-    plt.close()
+    fig.savefig(f"baseline_step_{t}.pdf", bbox_inches='tight')
 
     dists_gradient.append(compute_heur_dist(baseline_state_samples, mcts.target_state, qs, bs)) 
 
-    baseline_state_samples = baseline_algorithm(baseline_state_samples.copy(), 
+    baseline_state_samples = gradient_algorithm(baseline_state_samples.copy(), 
                                                  3, 2, 
                                                  target_state, qs, bs, 
                                                  n_dyn_steps=25)

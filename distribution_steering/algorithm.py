@@ -19,7 +19,7 @@ def dyn_func(x, u):
 
     return x_next
 
-def baseline_algorithm(samples: np.ndarray, 
+def gradient_algorithm(samples: np.ndarray, 
                        dim_state:int, 
                        dim_input:int, 
                        target_state, 

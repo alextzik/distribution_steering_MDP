@@ -1,7 +1,7 @@
 import math
 import numpy as np
 import torch
-from utils import two_sample_kl_estimator, compute_wasserstein_dist, plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat
+from utils import compute_heur_dist, sample_orthogonal_mat
 import parameters as pars
 import matplotlib.pyplot as plt
 
@@ -95,7 +95,7 @@ def gradient_algorithm(samples: np.ndarray,
         K_control.grad.zero_()
         b_control.grad.zero_()
 
-
+    dists = []
     for _dyn in range(10):
         us = K_control @ samples_torch + b_control  # shape (2, N)
         v = us[0, :]
@@ -105,6 +105,8 @@ def gradient_algorithm(samples: np.ndarray,
         y_next = samples_torch[1, :] + dt * v * torch.sin(theta)
         th_next = theta + dt * omega
         samples_torch = torch.stack([x_next, y_next, th_next], dim=0)
+
+        dists.append(compute_heur_dist(samples_torch.detach().numpy(), target_state, qs, bs))
     # us = K_control @ samples_torch + b_control
     # v = us[0, :]
     # omega = us[1, :]
@@ -114,4 +116,4 @@ def gradient_algorithm(samples: np.ndarray,
     # next_samples[1, :] = samples_torch[1, :] + dt * v * torch.sin(theta)
     # next_samples[2, :] = theta + dt * omega
 
-    return next_samples.detach().numpy()
+    return next_samples.detach().numpy(), dists

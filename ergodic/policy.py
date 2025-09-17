@@ -180,8 +180,8 @@ class ErgodicMPCPolicy(ShootingMPCPolicy):
         soft_constraint_quad_penalty: float=1000.,
         num_restarts: int=100,
         num_gradient_steps: int=1000,
-        optimizer_class: type = torch.optim.SGD,  # simple gradient descent optimizer
-        optimizer_kwargs: dict={"lr": 1e-3}):
+        optimizer_class: type = torch.optim.AdamW,
+        optimizer_kwargs: dict={}):
         """Initialize ergodic MPC policy.
         
         Args:

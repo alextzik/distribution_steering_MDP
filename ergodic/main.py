@@ -31,9 +31,9 @@ def setup():
     # )
     
     # Policy parameters
-    horizon = 10000
-    num_restarts = 1
-    num_gradient_steps = 1000
+    horizon = 70000
+    num_restarts = 20
+    num_gradient_steps = 150
     
     # LQR cost matrices
     state_dim = system.get_state_dim()
@@ -50,25 +50,29 @@ def setup():
     target_state = torch.zeros(state_dim)
     
     # Create 2-component GMM target distribution
-    num_target_samples = 1000
-    num_halfspaces = 50
+    num_target_samples = 10000
+    num_halfspaces = 300
     
     # Component 1: centered at (2, 2) with moderate spread
     mean1 = torch.tensor([3.0, 2.0])
-    cov1 = torch.tensor([[0.5, 0.1], [0.1, 0.5]])
+    cov1 = 10*torch.tensor([[0.5, 0.1], [0.1, 0.5]])
     
     # Component 2: centered at (-1, 1) with different orientation
-    mean2 = torch.tensor([-1.0, 1.0])
-    cov2 = torch.tensor([[0.3, -0.2], [-0.2, 0.8]])
+    mean2 = 2*torch.tensor([-1.0, 1.0])
+    cov2 = 10*torch.tensor([[0.3, -0.2], [-0.2, 0.8]])
+
+    # Component 3: centered at (0, -2) with different orientation
+    mean3 = 2*torch.tensor([0.0, -1.0])
+    cov3 = 10*torch.tensor([[0.3, -0.2], [-0.2, 0.8]])
     
     # Equal weights for both components
-    weights = torch.tensor([0.5, 0.5])
+    weights = torch.tensor([1/3, 1/3, 1/3])
     
     # Generate target samples from GMM
     component_assignments = torch.multinomial(weights, num_target_samples, replacement=True)
     target_density_samples = torch.zeros(2, num_target_samples)
-    
-    for i, (mean, cov) in enumerate(zip([mean1, mean2], [cov1, cov2])):
+
+    for i, (mean, cov) in enumerate(zip([mean1, mean2, mean3], [cov1, cov2, cov3])):
         mask = component_assignments == i
         num_component_samples = mask.sum().item()
         if num_component_samples > 0:
@@ -86,7 +90,7 @@ def setup():
         projections = q @ target_density_samples  # (num_target_samples,)
         p10 = torch.quantile(projections, 0.1)
         p90 = torch.quantile(projections, 0.9)
-        bs[i] = torch.linspace(p10, p90, 100)
+        bs[i] = -1*torch.linspace(p10, p90, 100)
     
     # now expand qs and bs to match shape (num_halfspaces*100, 2) and (num_halfspaces*100,). Each q should be matched with the corresponding row from bs
     qs = qs.repeat_interleave(100, dim=0)  # (num_halfspaces*100, 2)
@@ -117,8 +121,7 @@ def setup():
         soft_constraint_quad_penalty=0.0,
         num_restarts=num_restarts,
         num_gradient_steps=num_gradient_steps,
-        optimizer_class=torch.optim.AdamW,
-        optimizer_kwargs={'lr': 0.1}
+        optimizer_class=torch.optim.AdamW
     )
     
     return system, policy
@@ -129,7 +132,7 @@ def run_open_loop():
     system, policy = setup()
     
     # Initial state: start at (2, 2) with 45 degree heading
-    initial_state = torch.tensor([2.0, 2.0, np.pi/4]) # (x, y, theta) Unicycle
+    initial_state = torch.tensor([0.0, 0.0, 0.0]) # (x, y, theta) Unicycle
     #initial_state = torch.tensor([2.0, 2.0, np.pi/4, 0.0]) # (x, y, theta, delta) Bicycle
     
     print(f"Initial state: {initial_state}")
@@ -240,7 +243,7 @@ def visualize_results(system, policy, initial_state, action, info):
     all_y = np.concatenate([traj_xy[:,1], target_samples[1]])
     x_min, x_max = all_x.min()-0.5, all_x.max()+0.5
     y_min, y_max = all_y.min()-0.5, all_y.max()+0.5
-    bins = 50
+    bins = 100
     x_edges = np.linspace(x_min, x_max, bins+1)
     y_edges = np.linspace(y_min, y_max, bins+1)
 
@@ -250,13 +253,13 @@ def visualize_results(system, policy, initial_state, action, info):
     # Avoid zeros for log color if needed later
     # Create figure
     fig_hm, axes_hm = plt.subplots(1,2, figsize=(10,4))
-    im0 = axes_hm[0].imshow(traj_hist.T, origin='lower', extent=[x_min, x_max, y_min, y_max], aspect='equal', cmap='viridis')
-    axes_hm[0].set_title('Best Trajectory Occupancy')
+    im0 = axes_hm[0].imshow(traj_hist.T, origin='lower', extent=[x_min, x_max, y_min, y_max], aspect='equal', cmap='cividis')
+    axes_hm[0].set_title('Trajectory Occupancy')
     axes_hm[0].set_xlabel('X')
     axes_hm[0].set_ylabel('Y')
     plt.colorbar(im0, ax=axes_hm[0], fraction=0.046, pad=0.04)
 
-    im1 = axes_hm[1].imshow(target_hist.T, origin='lower', extent=[x_min, x_max, y_min, y_max], aspect='equal', cmap='viridis')
+    im1 = axes_hm[1].imshow(target_hist.T, origin='lower', extent=[x_min, x_max, y_min, y_max], aspect='equal', cmap='cividis')
     axes_hm[1].set_title('Target Density Samples')
     axes_hm[1].set_xlabel('X')
     axes_hm[1].set_ylabel('Y')
@@ -270,9 +273,7 @@ def visualize_results(system, policy, initial_state, action, info):
     fig_loss, ax_loss = plt.subplots(figsize=(6,4))
     ax_loss.plot(training_losses, linewidth=2)
     ax_loss.set_xlabel('Optimization Step')
-    ax_loss.set_ylabel('Minimum Cost')
-    ax_loss.set_title('Training Loss Over Time')
-    ax_loss.grid(True)
+    ax_loss.set_ylabel('Distance')
     plt.tight_layout()
     # plt.savefig('/Users/saturnv/sandbox/distribution_steering_MDP/ergodic/loss_curve.png', dpi=150, bbox_inches='tight')
     plt.show()

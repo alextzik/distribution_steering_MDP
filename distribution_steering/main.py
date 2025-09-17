@@ -221,6 +221,8 @@ for t in tqdm(range(num_steps)):
     
     dists_gradient += _dists_gradient
 
+    dists_gradient = np.array(dists_gradient)
+
 
 np.save("dists_gradient_baseline.npy", dists_gradient)
 

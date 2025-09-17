@@ -32,7 +32,7 @@ def setup():
     
     # Policy parameters
     horizon = 70000
-    num_restarts = 20
+    num_restarts = 1
     num_gradient_steps = 150
     
     # LQR cost matrices

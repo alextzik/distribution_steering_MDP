@@ -31,7 +31,7 @@ def setup():
     # )
     
     # Policy parameters
-    horizon = 10000
+    horizon = 20000
     num_restarts = 1
     num_gradient_steps = 150
     
@@ -50,29 +50,25 @@ def setup():
     target_state = torch.zeros(state_dim)
     
     # Create 2-component GMM target distribution
-    num_target_samples = 10000
+    num_target_samples = 20000
     num_halfspaces = 400
     
     # Component 1: centered at (2, 2) with moderate spread
-    mean1 = torch.tensor([3.0, 2.0])
-    cov1 = 10*torch.tensor([[0.5, 0.1], [0.1, 0.5]])
+    mean1 = torch.tensor([5.0, 5.0])
+    cov1 = 2*torch.tensor([[1.0, 0.0], [0.0, 1.0]])
     
     # Component 2: centered at (-1, 1) with different orientation
-    mean2 = 2*torch.tensor([-1.0, 1.0])
-    cov2 = 10*torch.tensor([[0.3, -0.2], [-0.2, 0.8]])
+    mean2 = torch.tensor([-10.0, -5.0])
+    cov2 = 2*torch.tensor([[1.0, 0.0], [0.0, 1.0]])
 
-    # Component 3: centered at (0, -2) with different orientation
-    mean3 = 2*torch.tensor([0.0, -1.0])
-    cov3 = 10*torch.tensor([[0.3, -0.2], [-0.2, 0.8]])
-    
     # Equal weights for both components
-    weights = torch.tensor([1/3, 1/3, 1/3])
+    weights = torch.tensor([0.5, 0.5])
     
     # Generate target samples from GMM
     component_assignments = torch.multinomial(weights, num_target_samples, replacement=True)
     target_density_samples = torch.zeros(2, num_target_samples)
 
-    for i, (mean, cov) in enumerate(zip([mean1, mean2, mean3], [cov1, cov2, cov3])):
+    for i, (mean, cov) in enumerate(zip([mean1, mean2], [cov1, cov2])):
         mask = component_assignments == i
         num_component_samples = mask.sum().item()
         if num_component_samples > 0:
@@ -88,8 +84,8 @@ def setup():
     bs = torch.zeros(num_halfspaces, 400)
     for i, q in enumerate(qs):
         projections = q @ target_density_samples  # (num_target_samples,)
-        p10 = torch.quantile(projections, 0.01)
-        p90 = torch.quantile(projections, 0.99)
+        p10 = torch.quantile(projections, 0.005)
+        p90 = torch.quantile(projections, 0.995)
         bs[i] = -1*torch.linspace(p10, p90, 400)
     
     # now expand qs and bs to match shape (num_halfspaces*100, 2) and (num_halfspaces*100,). Each q should be matched with the corresponding row from bs
@@ -243,7 +239,7 @@ def visualize_results(system, policy, initial_state, action, info):
     all_y = np.concatenate([traj_xy[:,1], target_samples[1]])
     x_min, x_max = all_x.min()-0.5, all_x.max()+0.5
     y_min, y_max = all_y.min()-0.5, all_y.max()+0.5
-    bins = 30
+    bins = 60
     x_edges = np.linspace(x_min, x_max, bins+1)
     y_edges = np.linspace(y_min, y_max, bins+1)
 

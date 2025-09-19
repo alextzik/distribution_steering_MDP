@@ -116,7 +116,7 @@ def compute_power(null_distances: np.ndarray, alt_distances: np.ndarray, alpha: 
 def parse_args():
     parser = argparse.ArgumentParser(description='Two-sample test using heuristic half-space distance.')
     parser.add_argument('--n-samples', type=int, default=1000)
-    parser.add_argument('--dim', type=int, default=2)
+    parser.add_argument('--dim', type=int, default=50)
     parser.add_argument('--n-trials', type=int, default=1000)
     parser.add_argument('--num-halfspaces', type=int, default=300)
     parser.add_argument('--mean_alt', type=float, default=0.2, help='Mean shift under alternative (added to all dims).')

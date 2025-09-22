@@ -1,6 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+# Increase the font size for better readability
+plt.rcParams.update({'font.size': 32, 'font.family': 'Times New Roman'})
+
 # Create two random 2D distributions
 np.random.seed(0)
 mean1 = [-2, 0]
@@ -11,7 +14,7 @@ dist1 = np.random.multivariate_normal(mean1, cov1, 1000)
 dist2 = np.random.multivariate_normal(mean2, cov2, 1000)
 
 # Set up the figure
-fig, ax = plt.subplots(figsize=(10, 10))
+fig, ax = plt.subplots(figsize=(12, 10))
 
 # Plot density of distributions
 ax.hexbin(dist1[:, 0], dist1[:, 1], gridsize=50, cmap='Blues', alpha=0.6, mincnt=1)
@@ -22,7 +25,7 @@ line_x = np.linspace(-3, 5, 100)
 line_y = line_x
 ax.plot(line_x, line_y, color="black", linestyle="--")
 # add text "Projection Line" near the bottom right of the line
-ax.text(-2, -2.5, "Projection Line", rotation=45, verticalalignment='bottom', horizontalalignment='right')
+ax.text(6., 3., "Projection Line", rotation=45, verticalalignment='bottom', horizontalalignment='right')
 
 # Projections onto the line
 projection1 = (dist1[:, 0] - dist1[:, 1]) / np.sqrt(2)
@@ -34,12 +37,13 @@ cdf1 = np.array([np.mean(projection1 <= val) for val in cdf_x_vals])
 cdf2 = np.array([np.mean(projection2 <= val) for val in cdf_x_vals])
 
 # Create a secondary axis aligned with the projection line
-secax = ax.inset_axes([0.1, 0.8, 0.5, 0.18]) # move more to left
+secax = ax.inset_axes([0.1, 0.8, 0.6, 0.18]) # move more to left
 secax.plot(cdf_x_vals, cdf1, color='blue', label="Projection of X")
 secax.plot(cdf_x_vals, cdf2, color='red', label="Projection of Y")
-secax.set_xlabel('Value')
+secax.set_xlabel('value')
 secax.set_ylabel('CDF')
-secax.legend(loc='upper left')
+# put legend juts underneadth the axis
+secax.legend(loc='upper center', bbox_to_anchor=(0.73, -3.7), ncol=2)
 
 # Scaling factor for visualizing the CDF over the projection line
 scale_factor = 1.

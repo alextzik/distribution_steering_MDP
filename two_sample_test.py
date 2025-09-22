@@ -79,13 +79,15 @@ def simulate_distances(n_samples: int = 100, dim: int = 2, n_trials: int = 500, 
         null_distances[i] = heuristic_halfspace_distance(X_null, Y_null, num_halfspaces, rng)
         # Alternative
         X_alt = rng.normal(0, 1, size=(n_samples, dim))
-        Y_alt = rng.normal(mean_alt, var_alt, size=(n_samples, dim))
+        Y_alt = rng.normal(mean_alt, np.sqrt(var_alt), size=(n_samples, dim))
         alt_distances[i] = heuristic_halfspace_distance(X_alt, Y_alt, num_halfspaces, rng)
     return null_distances, alt_distances
 
 
 def plot_distributions(null_distances: np.ndarray, alt_distances: np.ndarray, bins: int = 40, show: bool = True, save_path: str | None = None):
     plt.figure(figsize=(7,4))
+    # increae font size everywhere in the plot
+    plt.rcParams.update({'font.size': 20, 'font.family': 'Times New Roman'})
     plt.hist(null_distances, bins=bins, alpha=0.6, label='Null', density=True)
     plt.hist(alt_distances, bins=bins, alpha=0.6, label='Alternative', density=True)
     plt.axvline(null_distances.mean(), color='blue', linestyle='--', linewidth=1)

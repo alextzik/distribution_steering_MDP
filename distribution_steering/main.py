@@ -22,8 +22,7 @@ from scipy.stats import norm
 
 from typing import Callable
 
-import parameters as pars
-from utils import plot_level_curves_normal, compute_heur_dist, sample_orthogonal_mat, compute_heur_dist_unscented
+from utils import plot_level_curves_normal, compute_heur_dist
 from algorithm import gradient_algorithm
 
 plt.rcParams['font.family'] = 'Times New Roman'
@@ -59,7 +58,7 @@ class target_density:
         self.means = means
         self.covs = covs
 
-    def compute_prob_contents(self, qs:np.ndarray, bs:np.ndarray) -> None:
+    def compute_prob_contents(self, qs:np.ndarray, bs:np.ndarray, eval:bool) -> None:
         """
             Compute the prob content of the GMM in the halfspaces dictated by qs and bs
 
@@ -81,8 +80,10 @@ class target_density:
 
             prob_contents.append(prob_content.item())
 
-        self.prob_contents = prob_contents
-
+        if eval == "eval":
+            self.prob_contents_eval = prob_contents
+        else:
+            self.prob_contents_train = prob_contents
 ##########################################################################################
 class State:
     def __init__(self) -> None:
@@ -145,91 +146,116 @@ def dyn_func(x, u):
 
 dyns = dynamics(3, 2, dyn_func)
 
-num_steps = 100
-
-# intiial state
-state = State()
-init_mean = np.array([-2, -2., 0.])
-init_cov = np.eye(3)
-init_cov[2,2]=0.
-state.sample(mean = init_mean, covariance=init_cov, num_samples=3000)
-baseline_state_samples = state.samples
-
 # Target density
 target_means = [np.array([3., 2.])]
 target_covs = [np.array([[2, 1.5], [1.5, 2]])]
 target_weights = [1.]
 target_state = target_density(target_weights, target_means, target_covs)
 
+
+# Parameters
+num_steps = 20
+
+num_halfspaces_eval = 300
+num_bjs_eval = 100
+
 # Distance heuristic half-spaces    
-dirs = np.random.normal(size=(pars.NUM_HALFSPACES, 2))
+dirs = np.random.normal(size=(num_halfspaces_eval, 2))
 dirs /= np.linalg.norm(dirs, axis=1, keepdims=True) + 1e-12
-qs = dirs
+qs_eval = dirs
 
 quantiles = []
-for q in qs:
+for q in qs_eval:
     proj_samples = q@target_state.means[0].reshape(-1,1) + np.sqrt(q.T@target_state.covs[0]@q)*np.random.standard_normal(size=(1000,))
-    quantiles.append(np.quantile(proj_samples, 0.9))
-    quantiles.append(np.quantile(proj_samples, 0.1))
+    quantiles.append(np.quantile(proj_samples, 0.995))
+    quantiles.append(np.quantile(proj_samples, 0.005))
 
 
-bs = np.linspace(np.min(np.array(quantiles)), np.max(np.array(quantiles)), 100)
-bs = np.tile(bs, pars.NUM_HALFSPACES).reshape(-1,1)
-qs = np.repeat(qs.T, 100, axis=1)
+bs_eval = np.linspace(np.min(np.array(quantiles)), np.max(np.array(quantiles)), num_bjs_eval)
+bs_eval = np.tile(bs_eval, num_halfspaces_eval).reshape(-1,1)
+qs_eval = np.repeat(qs_eval.T, num_bjs_eval, axis=1)
 
 
-target_state.compute_prob_contents(qs, bs)
-print(target_state.prob_contents)
+target_state.compute_prob_contents(qs_eval, bs_eval, "eval")
 
-dists_gradient = [compute_heur_dist(baseline_state_samples, target_state, qs, bs)]
-
+dists_gradient = {}
 # Main Loop
-for t in tqdm(range(num_steps)):
+num_halfspaces_train = [50, 200, 400]
+num_bjs_train = [100, 400]
 
-    fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
-    plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
-    plot_level_curves_normal(init_mean[0:2], init_cov[0:2, 0:2], "summer")
-    # Heatmap of sample density instead of raw scatter
-    x_vals = baseline_state_samples[0, :]
-    y_vals = baseline_state_samples[1, :]
-    # Define bins (adjustable)
-    bins = 100
-    x_min, x_max = -5, 10
-    y_min, y_max = -5, 10
-    x_edges = np.linspace(x_min, x_max, bins+1)
-    y_edges = np.linspace(y_min, y_max, bins+1)
-    hist2d, xe, ye = np.histogram2d(x_vals, y_vals, bins=[x_edges, y_edges], density=True)
-    im = ax.imshow(hist2d.T, origin='lower', extent=[x_min, x_max, y_min, y_max], aspect='equal', cmap='cividis')
-    # make colorbar more transparent (adjust alpha of colorbar patches)
-    cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label('Density')
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_xlim(x_min, x_max)
-    ax.set_ylim(y_min, y_max)
-    
-    file_dir = os.path.dirname(os.path.realpath(__file__))
-    log_dir = os.path.join("/Users/alextzik/Documents/GitHub/distribution_steering_MDP/", "results") 
+for H in num_halfspaces_train:
+    for n_values in num_bjs_train:
+        # intiial state
+        state = State()
+        init_mean = np.array([-2, -2., 0.])
+        init_cov = np.eye(3)
+        init_cov[2,2]=0.
+        state.sample(mean = init_mean, covariance=init_cov, num_samples=3000)
+        baseline_state_samples = state.samples
 
-    os.chdir(log_dir)
-    fig.savefig(f"baseline_step_{t}.pdf", bbox_inches='tight')
+        dists_gradient[(H, n_values)] = [compute_heur_dist(baseline_state_samples, target_state, qs_eval, bs_eval)]
 
-    baseline_state_samples, _dists_gradient = gradient_algorithm(baseline_state_samples.copy(), 
-                                                 3, 2, 
-                                                 target_state, qs, bs, 
-                                                 n_dyn_steps=25)
-    
-    dists_gradient += _dists_gradient
+        # Sample half-space directions from SO(2)
+        # Distance heuristic half-spaces    
+        dirs = np.random.normal(size=(H, 2))
+        dirs /= np.linalg.norm(dirs, axis=1, keepdims=True) + 1e-12
+        qs_train = dirs
 
-    dists_gradient = np.array(dists_gradient)
+        quantiles_train = []
+        for q in qs_train:
+            proj_samples = q@target_state.means[0].reshape(-1,1) + np.sqrt(q.T@target_state.covs[0]@q)*np.random.standard_normal(size=(1000,))
+            quantiles_train.append(np.quantile(proj_samples, 0.995))
+            quantiles_train.append(np.quantile(proj_samples, 0.005))
 
 
-np.save("dists_gradient_baseline.npy", dists_gradient)
+        bs_train = np.linspace(np.min(np.array(quantiles_train)), np.max(np.array(quantiles_train)), n_values)
+        bs_train = np.tile(bs_train, H).reshape(-1,1)
+        qs_train = np.repeat(qs_train.T, n_values, axis=1)
 
-# np.save('proposed_dists.npy', dists)
-plt.plot(range(num_steps), dists_gradient, color='#2ca02c', label="Distance Metric (Alg. 1) for Gradient")
-# # plt.plot(range(num_steps), np.array(wass_dists)/np.array(wass_dists).max(), label="Wasserstein Distance (scaled)")
-plt.ylabel("Instantaneous Cost")
-plt.xlabel("Timestep")
-plt.legend()
-plt.show()
+        target_state.compute_prob_contents(qs_train, bs_train, "train")
+
+        for t in tqdm(range(num_steps)):
+
+            fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
+            plot_level_curves_normal(target_state.means[0], target_state.covs[0], "summer")
+            plot_level_curves_normal(init_mean[0:2], init_cov[0:2, 0:2], "summer")
+            # Heatmap of sample density instead of raw scatter
+            x_vals = baseline_state_samples[0, :]
+            y_vals = baseline_state_samples[1, :]
+            # Define bins (adjustable)
+            bins = 100
+            x_min, x_max = -5, 10
+            y_min, y_max = -5, 10
+            x_edges = np.linspace(x_min, x_max, bins+1)
+            y_edges = np.linspace(y_min, y_max, bins+1)
+            hist2d, xe, ye = np.histogram2d(x_vals, y_vals, bins=[x_edges, y_edges], density=True)
+            im = ax.imshow(hist2d.T, origin='lower', extent=[x_min, x_max, y_min, y_max], aspect='equal', cmap='cividis')
+            # make colorbar more transparent (adjust alpha of colorbar patches)
+            cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            cbar.set_label('Density')
+            ax.set_xlabel("x")
+            ax.set_ylabel("y")
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            
+            file_dir = os.path.dirname(os.path.realpath(__file__))
+            log_dir = os.path.join("/Users/alextzik/Documents/GitHub/distribution_steering_MDP/", "results") 
+
+            os.chdir(log_dir)
+            fig.savefig(f"baseline_step_{H}_{n_values}_{t}.pdf", bbox_inches='tight')
+
+            baseline_state_samples, _dists_gradient = gradient_algorithm(baseline_state_samples.copy(), 
+                                                        3, 2, 
+                                                        target_state, 
+                                                        qs_eval=qs_eval, bs_eval=bs_eval,
+                                                        qs_train=qs_train, bs_train=bs_train, 
+                                                        n_dyn_steps=25)
+            
+            dists_gradient[(H, n_values)]  += _dists_gradient
+
+        dists_gradient[(H, n_values)]  = np.array(dists_gradient[(H, n_values)] )
+
+# save dists_gradient dictionary to pickle
+import pickle
+with open('dists_gradient.pkl', 'wb') as f:
+    pickle.dump(dists_gradient, f)

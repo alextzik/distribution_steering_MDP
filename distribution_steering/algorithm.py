@@ -2,7 +2,6 @@ import math
 import numpy as np
 import torch
 from utils import compute_heur_dist, sample_orthogonal_mat
-import parameters as pars
 import matplotlib.pyplot as plt
 
 def dyn_func(x, u):
@@ -23,8 +22,10 @@ def gradient_algorithm(samples: np.ndarray,
                        dim_state:int, 
                        dim_input:int, 
                        target_state, 
-                       qs:np.ndarray, 
-                       bs:np.ndarray, 
+                       qs_eval:np.ndarray, 
+                       bs_eval:np.ndarray, 
+                       qs_train:np.ndarray,
+                        bs_train:np.ndarray,
                        n_dyn_steps:int = 1) -> np.ndarray:
     min_dim = np.minimum(dim_input, dim_state)
 
@@ -39,10 +40,14 @@ def gradient_algorithm(samples: np.ndarray,
     #######################
     samples_torch = torch.tensor(samples, dtype=torch.float32, requires_grad=False)
     
-    qs_torch = torch.tensor(qs, dtype=torch.float32, requires_grad=False)
-    bs_torch = torch.tensor(bs, dtype=torch.float32, requires_grad=False)
+    qs_eval_torch = torch.tensor(qs_eval, dtype=torch.float32, requires_grad=False)
+    bs_eval_torch = torch.tensor(bs_eval, dtype=torch.float32, requires_grad=False)
+
+    qs_train_torch = torch.tensor(qs_train, dtype=torch.float32, requires_grad=False)
+    bs_train_torch = torch.tensor(bs_train, dtype=torch.float32, requires_grad=False)
     
-    target_tensor = torch.tensor(target_state.prob_contents, dtype=torch.float32, requires_grad=False)
+    
+    target_tensor = torch.tensor(target_state.prob_contents_train, dtype=torch.float32, requires_grad=False)
 
     ######################
     step_size = 1e-2
@@ -66,13 +71,13 @@ def gradient_algorithm(samples: np.ndarray,
         next_samples = cur_samples
             
         # Assume qs_torch, next_samples, and bs_torch are defined and require gradients
-        linear_combination = qs_torch.T @ next_samples[:2, :] + bs_torch
+        linear_combination = qs_train_torch.T @ next_samples[:2, :] + bs_train_torch
         # Use softplus to create a differentiable approximation of the step function
         output = torch.sigmoid(100*linear_combination)
 
         # Now you can sum and compute gradients
         vals = torch.sum(output, dim=1)/samples.shape[1]
-        res = torch.sum(torch.abs(vals -  target_tensor))/pars.NUM_HALFSPACES
+        res = torch.sum(torch.abs(vals -  target_tensor))/vals.shape[0]
 
         res.backward(retain_graph=False)
         dists += [res.data]
@@ -96,7 +101,7 @@ def gradient_algorithm(samples: np.ndarray,
         b_control.grad.zero_()
 
     dists = []
-    for _dyn in range(10):
+    for _dyn in range(20):
         us = K_control @ samples_torch + b_control  # shape (2, N)
         v = us[0, :]
         omega = us[1, :]
@@ -106,14 +111,6 @@ def gradient_algorithm(samples: np.ndarray,
         th_next = theta + dt * omega
         samples_torch = torch.stack([x_next, y_next, th_next], dim=0)
 
-        dists.append(compute_heur_dist(samples_torch.detach().numpy(), target_state, qs, bs))
-    # us = K_control @ samples_torch + b_control
-    # v = us[0, :]
-    # omega = us[1, :]
-    # theta = samples_torch[2, :]
-    # next_samples = torch.empty_like(samples_torch)
-    # next_samples[0, :] = samples_torch[0, :] + dt * v * torch.cos(theta)
-    # next_samples[1, :] = samples_torch[1, :] + dt * v * torch.sin(theta)
-    # next_samples[2, :] = theta + dt * omega
+        dists.append(compute_heur_dist(samples_torch.detach().numpy(), target_state, qs_eval, bs_eval))
 
-    return next_samples.detach().numpy(), dists
+    return samples_torch.detach().numpy(), dists

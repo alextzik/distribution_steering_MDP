@@ -9,43 +9,13 @@ import numpy as np
 from system import UnicycleSystem, BicycleSystem
 from policy import DescentLQRPolicy, ErgodicMPCPolicy
 
-def setup():
-    """Create experiment setup with system and policy."""
-    
-    # Create unicycle system
-    system = UnicycleSystem(
-        dt=0.1,
-        max_velocity=2.0,
-        max_angular_velocity=2.0,
-        noise_xy_std=0.0,
-        noise_theta_std=0.0
-    )
-
-    # Create bicycle system
-    # system = BicycleSystem(
-    #     dt=0.1,
-    #     wheelbase=2.5,
-    #     max_velocity=2.0,
-    #     max_steering_angle=0.5,
-    #     max_steering_rate=1.0,
-    # )
-    
-    # Policy parameters
-    horizon = 20000
-    num_restarts = 1
-    num_gradient_steps = 170
-    
-    # Create 2-component GMM target distribution
-    num_target_samples = 20000
-    num_halfspaces = 400
-    num_bjs = 400
-    
+def eval_half_spaces(num_target_samples=20000, num_halfspaces=400, num_bjs=400):
     # Component 1: centered at (2, 2) with moderate spread
-    mean1 = torch.tensor([5.0, 5.0])
+    mean1 = torch.tensor([3.0, 3.0])
     cov1 = 2*torch.tensor([[1.0, 0.0], [0.0, 1.0]])
     
     # Component 2: centered at (-1, 1) with different orientation
-    mean2 = torch.tensor([-10.0, -5.0])
+    mean2 = torch.tensor([-4.0, -2.0])
     cov2 = 2*torch.tensor([[1.0, 0.0], [0.0, 1.0]])
 
     # Equal weights for both components
@@ -77,13 +47,50 @@ def setup():
     # now expand qs and bs to match shape (num_halfspaces*100, 2) and (num_halfspaces*100,). Each q should be matched with the corresponding row from bs
     qs = qs.repeat_interleave(num_bjs, dim=0)  # (num_halfspaces*100, 2)
     bs = bs.flatten().unsqueeze(1)  # (num_halfspaces*100, 1)
+
+    return qs, bs, target_density_samples
+
+def setup(num_halfspaces_train=400, num_bjs_train=400, qs_eval=None, bs_eval=None, target_density_samples=None):
+    """Create experiment setup with system and policy."""
+    
+    # Create unicycle system
+    system = UnicycleSystem(
+        dt=0.1,
+        max_velocity=2.0,
+        max_angular_velocity=2.0,
+        noise_xy_std=0.0,
+        noise_theta_std=0.0
+    )
+    
+    # Policy parameters
+    horizon = 5_000
+    num_restarts = 1
+    num_gradient_steps = 250
+    
+    # Sample half-space directions from SO(2)
+    angles = torch.rand(num_halfspaces_train) * 2 * np.pi
+    qs = torch.stack([torch.cos(angles), torch.sin(angles)], dim=1)  # (num_halfspaces, 2)
+    
+    # for each q in qs, we will have 100 different bs. They will be linspaced from the low-th to the high-th percentile of q^T target samples
+    bs = torch.zeros(num_halfspaces_train, num_bjs_train)
+    for i, q in enumerate(qs):
+        projections = q @ target_density_samples  # (num_target_samples,)
+        p_low = torch.quantile(projections, 0.005)
+        p_high = torch.quantile(projections, 0.995)
+        bs[i] = -1*torch.linspace(p_low, p_high, num_bjs_train)
+    
+    # now expand qs and bs to match shape (num_halfspaces*100, 2) and (num_halfspaces*100,). Each q should be matched with the corresponding row from bs
+    qs = qs.repeat_interleave(num_bjs_train, dim=0)  # (num_halfspaces*100, 2)
+    bs = bs.flatten().unsqueeze(1)  # (num_halfspaces*100, 1)
     
     policy = ErgodicMPCPolicy(
         system=system,
         horizon=horizon,
         target_density_samples=target_density_samples,
-        qs=qs,
-        bs=bs,
+        qs_eval=qs_eval,
+        bs_eval=bs_eval,
+        qs_train=qs,
+        bs_train=bs,
         soft_constraint_count_penalty=0.0,
         soft_constraint_quad_penalty=0.0,
         num_restarts=num_restarts,
@@ -96,29 +103,44 @@ def setup():
 def run_open_loop():
     """Test policy on a single initial state."""
     print("Setting up test...")
-    system, policy = setup()
-    
-    # Initial state: start at (2, 2) with 45 degree heading
-    initial_state = torch.tensor([0.0, 0.0, 0.0]) # (x, y, theta) Unicycle
-    #initial_state = torch.tensor([2.0, 2.0, np.pi/4, 0.0]) # (x, y, theta, delta) Bicycle
-    
-    print(f"Initial state: {initial_state}")
-    # print(f"Target state: {policy.target_state}")
-    print(f"System state dim: {system.get_state_dim()}")
-    print(f"System action dim: {system.get_action_dim()}")
-    print(f"System constraint dim: {system.get_constraint_dim()}")
-    
-    print("\nRunning policy optimization...")
-    action, info = policy.action_info(initial_state)
-    
-    print(f"\nOptimization complete!")
-    print(f"Immediate action: {action}")
-    print(f"Best cost: {info['best_cost']:.4f}")
-    print(f"Best cost index: {info['best_cost_index']}")
-    
-    return system, policy, initial_state, action, info
 
-def visualize_results(system, policy, initial_state, action, info):
+    qs_eval, bs_eval, target_density_samples = eval_half_spaces(num_target_samples=5_000, num_halfspaces=400, num_bjs=400)
+
+    num_half_spaces = [50, 200, 400]
+    num_bjs = [100, 400]
+
+    systems = {}
+    policies = {}
+    infos = {}
+    # get for loop with cartesian product of num_half_spaces and num_bjs
+    for num_halfspaces_train in num_half_spaces:
+        for num_bjs_train in num_bjs:
+            system, policy = setup(num_halfspaces_train=num_halfspaces_train, num_bjs_train=num_bjs_train, qs_eval=qs_eval, bs_eval=bs_eval, target_density_samples=target_density_samples)
+            systems[(num_halfspaces_train, num_bjs_train)] = system
+            policies[(num_halfspaces_train, num_bjs_train)] = policy
+
+            # Initial state: start at (2, 2) with 45 degree heading
+            initial_state = torch.tensor([0.0, 0.0, 0.0]) # (x, y, theta) Unicycle
+            #initial_state = torch.tensor([2.0, 2.0, np.pi/4, 0.0]) # (x, y, theta, delta) Bicycle
+            
+            print(f"Initial state: {initial_state}")
+            # print(f"Target state: {policy.target_state}")
+            print(f"System state dim: {system.get_state_dim()}")
+            print(f"System action dim: {system.get_action_dim()}")
+
+            print("\nRunning policy optimization...")
+            action, info = policy.action_info(initial_state)
+
+            infos[(num_halfspaces_train, num_bjs_train)] = info
+            
+            print(f"\nOptimization complete!")
+            print(f"Immediate action: {action}")
+            print(f"Best cost: {info['best_cost']:.4f}")
+            print(f"Best cost index: {info['best_cost_index']}")
+    
+    return policies, infos
+
+def visualize_results(policy, info):
     """Visualize the optimization results."""
 
     # --- New Figure: Heatmaps of trajectory occupancy vs target density samples ---
@@ -171,8 +193,25 @@ def visualize_results(system, policy, initial_state, action, info):
 def main():
     """Main test function."""
 
-    system, policy, initial_state, action, info = run_open_loop()
-    visualize_results(system, policy, initial_state, action, info)
+    policies, infos = run_open_loop()
+    for (num_halfspaces_train, num_bjs_train), policy in policies.items():
+        print(f"Visualizing results for H={num_halfspaces_train}, n_values={num_bjs_train}...")
+        visualize_results(policy, infos[(num_halfspaces_train, num_bjs_train)])
+    
+    # --- New Figure: Loss vs optimization step (already shown, but separate figure) ---
+    fig_loss, ax_loss = plt.subplots(figsize=(6,4))
+    # increase font size everywhere in ax_loss
+    ax_loss.tick_params(labelsize=16)
+    for (num_halfspaces_train, num_bjs_train), info in infos.items():
+        training_losses = info['eval_losses']
+        ax_loss.plot(training_losses, linewidth=2, label=f'$H={num_halfspaces_train}$, $n_{{\\mathrm{{values}}}}={num_bjs_train}$')       
+    ax_loss.set_xlabel('Optimization Step', fontsize=16)
+    ax_loss.set_ylabel('Distance', fontsize=16)
+    plt.tight_layout()
+    # add legend
+    ax_loss.legend(fontsize=16, loc='upper right')
+    # plt.savefig('/Users/saturnv/sandbox/distribution_steering_MDP/ergodic/loss_curve.png', dpi=150, bbox_inches='tight')
+    plt.show()
 
 if __name__ == "__main__":
     main()
